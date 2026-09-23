@@ -10,6 +10,7 @@ import { Viewport3DOrganism } from '../organisms/Viewport3DOrganism';
 import { SerialConsoleOrganism } from '../organisms/SerialConsoleOrganism';
 import { ExportModal } from '../molecules/ExportModal';
 import { FirmwareModal } from '../molecules/FirmwareModal';
+import { SerialErrorAlert } from '../molecules/SerialErrorAlert';
 
 export const ScannerWorkspaceTemplate: React.FC = () => {
   const {
@@ -22,6 +23,9 @@ export const ScannerWorkspaceTemplate: React.FC = () => {
     setBaudRate,
     simulatedModel,
     setSimulatedModel,
+    serialError,
+    dismissSerialError,
+    switchToSimulator,
     scanStatus,
     turntable,
     sensorData,
@@ -76,6 +80,17 @@ export const ScannerWorkspaceTemplate: React.FC = () => {
           onDisconnect={handleDisconnect}
           onOpenFirmware={() => setIsFirmwareModalOpen(true)}
         />
+
+        {/* Serial Connection Diagnostic Alert */}
+        {serialError && (
+          <SerialErrorAlert
+            error={serialError}
+            onRetry={handleConnect}
+            onSwitchToSimulator={switchToSimulator}
+            onDismiss={dismissSerialError}
+            onOpenFirmware={() => setIsFirmwareModalOpen(true)}
+          />
+        )}
 
         {/* Scan Telemetry Stats */}
         <PointCloudStats

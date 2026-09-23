@@ -45,3 +45,11 @@ export type VisualRenderMode = 'points' | 'wireframe' | 'surface' | 'points_and_
 export type ColorMapMode = 'height' | 'distance' | 'angle' | 'cyber' | 'monochrome';
 
 export type ExportFormat = 'stl_mesh' | 'stl_cloud' | 'obj_mesh' | 'obj_cloud' | 'ply' | 'xyz';
+
+export interface SerialErrorInfo {
+  code: 'LOCKED_OR_IN_USE' | 'PERMISSION_DENIED' | 'UNSUPPORTED' | 'DISCONNECTED' | 'UNKNOWN';
+  title: string;
+  message: string;
+  reasons: string[];
+  solutions: string[];
+}

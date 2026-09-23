@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Cpu, Terminal, BookOpen, Sliders } from 'lucide-react';
+import { X, Copy, Check, Cpu, Terminal, BookOpen, Sliders, AlertTriangle } from 'lucide-react';
 import { Button } from '../atoms/Button';
 import { generateEsp32Firmware, DEFAULT_FIRMWARE_CONFIG, FirmwareConfig } from '../../utils/esp32Firmware';
 
@@ -85,6 +85,17 @@ export const FirmwareModal: React.FC<FirmwareModalProps> = ({ isOpen, onClose })
         <div className="p-6 flex-1 overflow-y-auto">
           {activeTab === 'code' && (
             <div className="flex flex-col gap-3">
+              {/* Important notice about serial port lock */}
+              <div className="bg-amber-950/40 border border-amber-500/40 rounded-xl p-3 text-xs text-amber-200 flex items-start gap-2.5">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-amber-300">
+                    Evita el error &quot;Failed to open serial port&quot;:
+                  </span>{' '}
+                  Una vez que subas el sketch al ESP32, <strong>CIERRA el Monitor Serie en Arduino IDE</strong>. Si el Monitor Serie de Arduino permanece abierto, toma posesión exclusiva del puerto COM y el navegador no podrá conectarse.
+                </div>
+              </div>
+
               <div className="flex items-center justify-between text-xs text-neutral-400">
                 <span>Librería requerida: <code>ESP32Servo</code> (disponible en el Gestor de Bibliotecas de Arduino)</span>
                 <Button
