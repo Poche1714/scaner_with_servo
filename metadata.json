@@ -1,0 +1,7 @@
+{
+  "name": "ScanESP32 3D - Escáner 3D Ultrasónico y Servomotor",
+  "description": "Aplicación de escaneo 3D en tiempo real con ESP32, sensor ultrasónico HC-SR04, control de servomotor de plataforma giratoria y exportación a formatos STL y OBJ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
