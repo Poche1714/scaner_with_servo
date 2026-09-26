@@ -138,8 +138,8 @@ export const ExplorationHUD: React.FC<ExplorationHUDProps> = ({
         </div>
 
         <div className="flex items-center justify-between text-[11px] mt-2 font-mono">
-          <span className={isClose || scanMode === 'survey_paused' ? 'text-rose-300 font-semibold' : 'text-neutral-500'}>
-            {isClose || scanMode === 'survey_paused' ? '¡Alerta Obstáculo! Detenido' : 'Sondeo ±15° Vigilancia'}
+          <span className={isClose || scanMode === 'obstacle_reduced_sweep' ? 'text-amber-300 font-semibold' : 'text-neutral-500'}>
+            {isClose || scanMode === 'obstacle_reduced_sweep' ? 'Sondeo Reducido ±10° (Obstáculo)' : 'Sondeo Normal ±30° (0 a ±30°)'}
           </span>
           <span className="text-neutral-500 text-[10px]">Corte: {obstacleThresholdCm}cm</span>
         </div>

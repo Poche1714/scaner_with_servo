@@ -71,14 +71,15 @@ export function useWorldDiscoverer() {
   // Autonomous exploration state
   const [isAutonomous, setIsAutonomous] = useState(false);
 
-  // Rover & Sweep State (Sensor starts at 90°, probes ±15°, focused survey [+25°, -10°] on obstacle <= 40cm, PWM 175-198)
+  // Rover & Sweep State (Sensor starts at 90°, normal sweep 0 to 30° / 0 to -30°, reduced to 0 to 10° / 0 to -10° on obstacle <= 40cm, PWM 175-198)
   const [roverState, setRoverState] = useState<RoverSweepState>({
     currentAngle: 90, // Punto de inicio: 90° (0° relativo / Frente)
     relativeAngle: 0,
     targetAngle: 90,
     sweepDirection: 'forward',
     isScanning: true,
-    scanMode: 'narrow_patrol', // Modo inicial: patrullaje estrecho (±15°)
+    scanMode: 'normal_sweep', // Modo inicial normal: de 0 a 30° y de 0 a -30° (60° a 120° servo)
+    scanSpanDeg: 30, // Amplitud normal de 30° (±30° relativo)
     isObstacleDetected: false,
     obstacleDistanceCm: null,
     obstacleDetectedAngle: null,
@@ -86,7 +87,7 @@ export function useWorldDiscoverer() {
     surveyMinAngle: null,
     surveyMaxAngle: null,
     surveyStepDirection: 1,
-    surveyPassesCount: 0, // Contador de los 3 barridos de sondeo enfocado
+    surveyPassesCount: 0,
     sweepPeriodSeconds: 20,
     elapsedInSweepSeconds: 0,
     totalSweepsCompleted: 0,
@@ -374,39 +375,31 @@ export function useWorldDiscoverer() {
     [isAutonomous, recordTrajectoryBreadcrumb]
   );
 
-  // Reiniciar el sondeo a 90° (0° relativo / Frente) y modo normal ±15° al girar el bot
-  const restartSonarSweep = useCallback(() => {
+  // Cuando gire el bot, vuelve al estado normal de 0 a 30 y de 0 a -30
+  const resetScanToNormal = useCallback(() => {
     setRoverState((prev) => ({
       ...prev,
       isScanning: true,
-      scanMode: 'narrow_patrol',
-      currentAngle: 90,
-      targetAngle: 90,
-      relativeAngle: 0,
-      sweepDirection: 'forward',
-      surveyPassesCount: 0,
-      surveyMinAngle: null,
-      surveyMaxAngle: null,
-      surveyStepDirection: 1,
+      scanMode: 'normal_sweep',
+      scanSpanDeg: 30, // Rango normal: 0 a 30° y 0 a -30° (60° a 120° servo)
       isObstacleDetected: false,
       obstacleDistanceCm: null,
       obstacleDetectedAngle: null,
     }));
     sendSerialCommand('START');
-    sendSerialCommand('GOTO:90');
-    addLog('Giro del vehículo detectado: Senso y muestreo REINICIADOS hacia el frente (90° / Vigilancia ±15°).', 'sys');
+    addLog('Giro del bot detectado: Senso restablecido al estado normal (0 a 30° y 0 a -30°).', 'sys');
   }, [sendSerialCommand, addLog]);
 
-  // Manual driving actions with calibrated PWM (175 - 198) and calibrated step duration
+  // Rutina de avance y retroceso modificada (duración y potencia calibradas para mover los motores)
   const driveForward = useCallback(
     (distCm: number = 20, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
       const speedCmS = Number(((activePwm / 185) * 25).toFixed(1));
-      const durationMs = Math.max(600, Math.round(distCm * 30));
+      const durationMs = Math.max(450, Math.round(distCm * 25));
       moveBot(distCm, 0, speedCmS, durationMs);
       sendSerialCommand(`MOVE:F,${activePwm},${durationMs}`);
       addLog(
-        `Avanzando bot paso de +${distCm} cm hacia rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}, impulso: ${durationMs}ms).`,
+        `Avanzando paso de +${distCm} cm hacia rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}, duración: ${durationMs}ms).`,
         'sys'
       );
     },
@@ -417,35 +410,36 @@ export function useWorldDiscoverer() {
     (distCm: number = 20, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
       const speedCmS = Number(((activePwm / 185) * 20).toFixed(1));
-      const durationMs = Math.max(600, Math.round(distCm * 30));
+      const durationMs = Math.max(450, Math.round(distCm * 25));
       moveBot(-distCm, 0, speedCmS, durationMs);
       sendSerialCommand(`MOVE:B,${activePwm},${durationMs}`);
       addLog(
-        `Retrocediendo bot paso de -${distCm} cm desde rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}, impulso: ${durationMs}ms).`,
+        `Retrocediendo paso de -${distCm} cm desde rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}, duración: ${durationMs}ms).`,
         'sys'
       );
     },
     [moveBot, sendSerialCommand, motorPwm, addLog]
   );
 
+  // Giros: conservados como en la versión anterior + restablecimiento del senso a 0 a 30° y 0 a -30°
   const turnLeft = useCallback(
     (deg: number = 15, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
-      moveBot(0, deg, 15);
+      moveBot(0, deg, 15, 300);
       sendSerialCommand(`TURN:L,${activePwm},${deg}`);
-      restartSonarSweep(); // Al girar el bot, reiniciar el sondeo
+      resetScanToNormal(); // Al girar el bot, vuelve al estado normal de 0 a 30 y de 0 a -30
     },
-    [moveBot, sendSerialCommand, motorPwm, restartSonarSweep]
+    [moveBot, sendSerialCommand, motorPwm, resetScanToNormal]
   );
 
   const turnRight = useCallback(
     (deg: number = 15, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
-      moveBot(0, -deg, 15);
+      moveBot(0, -deg, 15, 300);
       sendSerialCommand(`TURN:R,${activePwm},${deg}`);
-      restartSonarSweep(); // Al girar el bot, reiniciar el sondeo
+      resetScanToNormal(); // Al girar el bot, vuelve al estado normal de 0 a 30 y de 0 a -30
     },
-    [moveBot, sendSerialCommand, motorPwm, restartSonarSweep]
+    [moveBot, sendSerialCommand, motorPwm, resetScanToNormal]
   );
 
   const stopBot = useCallback(() => {
@@ -487,20 +481,21 @@ export function useWorldDiscoverer() {
       const isObstacleAhead = currentDist <= 40.0;
 
       if (isObstacleAhead) {
-        // When obstacle is detected within 40cm, steer away using panoramic survey
+        // When obstacle is detected within 40cm, steer away and reset scan range on turn
         const turnDirection = currentSensorAngle >= 90 ? -18 : 18;
-        moveBot(0.5, turnDirection, 8);
+        moveBot(0.5, turnDirection, 8, 300);
+        resetScanToNormal();
       } else {
         // Forward exploration cruise with smooth organic wander
         const gentleTurn = (Math.random() - 0.5) * 3;
-        moveBot(3.5, gentleTurn, 16);
+        moveBot(3.5, gentleTurn, 16, 250);
       }
     }, 180);
 
     return () => {
       if (autonomousNavIntervalRef.current) clearInterval(autonomousNavIntervalRef.current);
     };
-  }, [isAutonomous, roverState.currentDistanceCm, roverState.currentAngle, moveBot]);
+  }, [isAutonomous, roverState.currentDistanceCm, roverState.currentAngle, moveBot, resetScanToNormal]);
 
   // Keyboard navigation listener (W, A, S, D, Arrows, Space)
   useEffect(() => {
@@ -740,34 +735,35 @@ export function useWorldDiscoverer() {
 
                       setRoverState((prev) => {
                         let nextMode = prev.scanMode;
+                        let nextSpan = prev.scanSpanDeg || 30;
                         let obsDetectedAngle = prev.obstacleDetectedAngle;
-                        let sMin = prev.surveyMinAngle;
-                        let sMax = prev.surveyMaxAngle;
 
-                        if (isObstacle && prev.scanMode !== 'survey_paused') {
-                          // Obstacle spotted! Stop sampling immediately and trigger alert
-                          nextMode = 'survey_paused';
-                          obsDetectedAngle = relAngle;
-                          radarAudio.playObstacleAlert();
-                          addLog(
-                            `¡ALERTA CRÍTICA DE OBSTÁCULO! Obstáculo en ${relAngle}° a ${dist.toFixed(1)} cm (≤ 40 cm). Muestreo DETENIDO inmediatamente. Gire el coche para reiniciar el senso.`,
-                            'sys'
-                          );
-                          sendSerialCommand('STOP');
+                        if (isObstacle) {
+                          // "no quiero que pares si encuentra el obstaculo, solo quiero que disminuyas el rango de senso,
+                          // pasa de 0 a 30 y 0 a -30 a 0 a 10 y de 0 a -10"
+                          if (prev.scanMode !== 'obstacle_reduced_sweep') {
+                            nextMode = 'obstacle_reduced_sweep';
+                            nextSpan = 10;
+                            obsDetectedAngle = relAngle;
+                            radarAudio.playObstacleAlert();
+                            addLog(
+                              `¡Obstáculo detectado a ${dist.toFixed(1)} cm (≤ 40 cm)! Rango de senso reducido a 0° a 10° y 0° a -10° (muestreo continuo activo).`,
+                              'sys'
+                            );
+                          }
                         }
 
                         return {
                           ...prev,
-                          isScanning: !isObstacle && prev.isScanning,
+                          isScanning: true, // MUESTREO CONTINUO (NO SE DETIENE)
                           currentAngle: Math.round(angle),
                           relativeAngle: relAngle,
                           currentDistanceCm: dist,
-                          isObstacleDetected: isObstacle || prev.isObstacleDetected,
+                          isObstacleDetected: isObstacle,
                           obstacleDistanceCm: isObstacle ? dist : prev.obstacleDistanceCm,
                           obstacleDetectedAngle: obsDetectedAngle,
                           scanMode: nextMode,
-                          surveyMinAngle: sMin,
-                          surveyMaxAngle: sMax,
+                          scanSpanDeg: nextSpan,
                         };
                       });
 
@@ -959,14 +955,12 @@ export function useWorldDiscoverer() {
 
     sweepIntervalRef.current = setInterval(() => {
       setRoverState((prev) => {
-        const CENTER_ANGLE = 90; // Punto de inicio: 90° (0° relativo / Frente)
-        const NARROW_SPAN = 15; // Sondeo estrecho normal: 0 a +15° (105°) y 0 a -15° (75°)
-        const MAX_OBSTACLE_SPAN = 55; // Límite en obstáculo: no 90 a -90, sino 55 a -55 (35° a 145° servo)
-        const BOUND_MIN = CENTER_ANGLE - MAX_OBSTACLE_SPAN; // 35° (-55° relativo)
-        const BOUND_MAX = CENTER_ANGLE + MAX_OBSTACLE_SPAN; // 145° (+55° relativo)
-        const THRESHOLD_CM = prev.obstacleThresholdCm; // 40 cm
+        const CENTER_ANGLE = 90; // 0° relativo (Frente)
+        const NORMAL_SPAN = 30; // Estado normal: de 0 a 30° y de 0 a -30° (60° a 120° servo)
+        const OBSTACLE_SPAN = 10; // Con obstáculo: de 0 a 10° y de 0 a -10° (80° a 100° servo)
+        const THRESHOLD_CM = prev.obstacleThresholdCm || 40; // 40 cm
 
-        // 1. Sincronización precisa SIN DESFASE: muestrear exactamente en la posición física actual
+        // 1. Muestreo sincronizado sin desfase en el ángulo actual
         const currentSampleAngle = prev.currentAngle;
         let newDist = prev.currentDistanceCm;
         if (connectionMode === 'simulator') {
@@ -981,116 +975,72 @@ export function useWorldDiscoverer() {
         let newAngle = currentSampleAngle;
         let newDir = prev.sweepDirection;
         let newMode = prev.scanMode;
+        let activeSpan = prev.scanSpanDeg || NORMAL_SPAN;
         let newSweeps = prev.totalSweepsCompleted;
         let isObstacle = prev.isObstacleDetected;
         let obstacleDist = prev.obstacleDistanceCm;
         let obsDetectedAngle = prev.obstacleDetectedAngle;
-        let surveyMin = prev.surveyMinAngle;
-        let surveyMax = prev.surveyMaxAngle;
-        let surveyStepDir = prev.surveyStepDirection;
 
-        let surveyPasses = prev.surveyPassesCount || 0;
-        let isScanningActive = prev.isScanning;
-
-        // 2. Detección de obstáculo a <= 40 cm
+        // 2. Evaluación de obstáculo:
+        // "no quiero que pares si encuentra el obstaculo, solo quiero que disminuyas el rango de senso,
+        //  pasa de 0 a 30 y 0 a -30 a 0 a 10 y de 0 a -10"
         if (newDist <= THRESHOLD_CM) {
           isObstacle = true;
           obstacleDist = newDist;
+          obsDetectedAngle = Math.round(currentSampleAngle - CENTER_ANGLE);
+          newMode = 'obstacle_reduced_sweep';
+          activeSpan = OBSTACLE_SPAN; // Rango reducido a 10° (80° a 100°)
+        } else if (newMode === 'obstacle_reduced_sweep' && newDist > THRESHOLD_CM + 15) {
+          // Si el camino se despejó ampliamente y no hay obstáculo
+          isObstacle = false;
+        }
 
-          // REGLA: "cuando detecte un obstaculo, deje de realizar el muestreo y lance una alerta"
-          // "solo hasta que gire el coche de reiniciar el senso"
-          if (newMode !== 'survey_paused') {
-            const relDetected = Math.round(currentSampleAngle - CENTER_ANGLE);
-            obsDetectedAngle = relDetected;
-            newMode = 'survey_paused';
-            isScanningActive = false; // Detener muestreo inmediatamente
+        // 3. Barrido oscilatorio continuo dentro de activeSpan
+        const minAngle = CENTER_ANGLE - activeSpan; // 60° (normal) u 80° (obstáculo)
+        const maxAngle = CENTER_ANGLE + activeSpan; // 120° (normal) o 100° (obstáculo)
+        const stepDeg = 1.8;
 
-            radarAudio.playObstacleAlert();
-            addLog(
-              `¡ALERTA CRÍTICA DE OBSTÁCULO! Objeto a ${newDist.toFixed(1)} cm (≤ ${THRESHOLD_CM} cm) en ${relDetected}°. MUESTREO DETENIDO inmediatamente. Gire el coche para reiniciar el senso.`,
-              'sys'
-            );
-            sendSerialCommand('STOP');
+        if (newDir === 'forward') {
+          newAngle += stepDeg;
+          if (newAngle >= maxAngle) {
+            newAngle = maxAngle;
+            newDir = 'backward';
+            newSweeps += 1;
+          }
+        } else {
+          newAngle -= stepDeg;
+          if (newAngle <= minAngle) {
+            newAngle = minAngle;
+            newDir = 'forward';
+            newSweeps += 1;
           }
         }
 
-        // 3. Avance según el modo activo
-        if (newMode === 'survey_paused') {
-          // Sondeo detenido por detección de obstáculo. Permanece quieto sin muestreo hasta que el coche gire.
-        } else if (newMode === 'narrow_patrol') {
-          // Vigilancia normal: oscilación ±15° (de 75° a 105°)
-          const minNarrow = CENTER_ANGLE - NARROW_SPAN; // 75°
-          const maxNarrow = CENTER_ANGLE + NARROW_SPAN; // 105°
-          const stepDeg = 1.5;
-
-          if (newDir === 'forward') {
-            newAngle += stepDeg;
-            if (newAngle >= maxNarrow) {
-              newAngle = maxNarrow;
-              newDir = 'backward';
-            }
-          } else {
-            newAngle -= stepDeg;
-            if (newAngle <= minNarrow) {
-              newAngle = minNarrow;
-              newDir = 'forward';
-            }
-          }
-
-          // Si el camino se despejó (> 40cm), restablecer alerta
-          if (newDist > THRESHOLD_CM) {
-            isObstacle = false;
-            obstacleDist = null;
-          }
-        } else {
-          // Modo panorámico de seguridad: delimitado a -55° y +55° (35° a 145° servo)
-          const stepDeg = 2.0;
-          if (newDir === 'forward') {
-            newAngle += stepDeg;
-            if (newAngle >= BOUND_MAX) {
-              newAngle = BOUND_MAX;
-              newDir = 'backward';
-              newSweeps += 1;
-              if (newDist > THRESHOLD_CM) {
-                newMode = 'narrow_patrol';
-                newAngle = CENTER_ANGLE;
-              }
-            }
-          } else {
-            newAngle -= stepDeg;
-            if (newAngle <= BOUND_MIN) {
-              newAngle = BOUND_MIN;
-              newDir = 'forward';
-              newSweeps += 1;
-              if (newDist > THRESHOLD_CM) {
-                newMode = 'narrow_patrol';
-                newAngle = CENTER_ANGLE;
-              }
-            }
-          }
+        // Si el ángulo estaba fuera del nuevo rango (por ejemplo, al reducirse el span repentinamente)
+        if (newAngle > maxAngle) {
+          newAngle = maxAngle;
+          newDir = 'backward';
+        }
+        if (newAngle < minAngle) {
+          newAngle = minAngle;
+          newDir = 'forward';
         }
 
         const relativeAngle = Math.round(newAngle - CENTER_ANGLE);
-        const progressFrac =
-          newMode === 'narrow_patrol'
-            ? Math.abs(newAngle - (CENTER_ANGLE - NARROW_SPAN)) / (NARROW_SPAN * 2)
-            : Math.abs(newAngle - BOUND_MIN) / (BOUND_MAX - BOUND_MIN);
+        const progressFrac = Math.abs(newAngle - minAngle) / Math.max(1, maxAngle - minAngle);
         const elapsedSec = Number((progressFrac * prev.sweepPeriodSeconds).toFixed(1));
 
         return {
           ...prev,
-          isScanning: isScanningActive,
-          surveyPassesCount: surveyPasses,
+          isScanning: true, // MUESTREO NUNCA SE DETIENE POR OBSTÁCULO
           currentAngle: Number(newAngle.toFixed(1)),
           relativeAngle,
           sweepDirection: newDir,
           scanMode: newMode,
+          scanSpanDeg: activeSpan,
           isObstacleDetected: isObstacle,
           obstacleDistanceCm: obstacleDist,
           obstacleDetectedAngle: obsDetectedAngle,
-          surveyMinAngle: surveyMin,
-          surveyMaxAngle: surveyMax,
-          surveyStepDirection: surveyStepDir,
           totalSweepsCompleted: newSweeps,
           elapsedInSweepSeconds: elapsedSec,
           currentDistanceCm: newDist,

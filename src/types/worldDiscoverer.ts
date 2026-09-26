@@ -49,10 +49,12 @@ export interface BotPose {
 export type SweepDirection = 'forward' | 'backward';
 
 export type ScanMode = 
-  | 'narrow_patrol'           // Vigilancia normal ±15° (de -15° a +15° relativo, 75° a 105° servo)
-  | 'obstacle_focused_survey' // Sondeo enfocado del objeto detectado (+25° más y -10° menos, 3 barridos)
-  | 'survey_paused'           // Sondeo detenido tras completar los 3 barridos (se reinicia al girar el bot)
-  | 'obstacle_panoramic';     // Barrido de seguridad delimitado a -55° y +55° relativo (35° a 145° servo)
+  | 'normal_sweep'            // Estado normal: de 0 a 30° y de 0 a -30° (60° a 120° servo)
+  | 'obstacle_reduced_sweep'  // Obstáculo detectado (≤ 40 cm): rango reducido de 0 a 10° y de 0 a -10° (80° a 100° servo)
+  | 'narrow_patrol'           // Compatibilidad de modos previos
+  | 'obstacle_focused_survey'
+  | 'survey_paused'
+  | 'obstacle_panoramic';
 
 export interface RoverSweepState {
   currentAngle: number; // 0 to 180 (90° is center forward / 0° relativo)
@@ -61,15 +63,16 @@ export interface RoverSweepState {
   sweepDirection: SweepDirection;
   isScanning: boolean;
   scanMode: ScanMode;
+  scanSpanDeg: number; // 30 en normal (±30°), 10 con obstáculo (±10°)
   isObstacleDetected: boolean;
   obstacleDistanceCm: number | null; // Exact cm to detected obstacle
   obstacleDetectedAngle: number | null; // Exact relative angle where obstacle was spotted
   obstacleThresholdCm: number; // 40 cm trigger
-  // Focused object survey window: [detected - 10°, detected + 25°]
+  // Focused object survey window (opcional compatibilidad)
   surveyMinAngle: number | null;
   surveyMaxAngle: number | null;
   surveyStepDirection: 1 | -1;
-  surveyPassesCount: number; // 0 a 3 barridos del objeto
+  surveyPassesCount: number;
   sweepPeriodSeconds: number; // seconds for cycle
   elapsedInSweepSeconds: number;
   totalSweepsCompleted: number;

@@ -186,16 +186,16 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
         </span>
       </button>
 
-      {/* Obstacle Alert & Sampling Halted Banner */}
-      {roverState && (roverState.isObstacleDetected || roverState.scanMode === 'survey_paused') && (
-        <div className="bg-rose-950/70 border border-rose-500/60 rounded-lg p-2.5 flex items-start gap-2.5 text-rose-200 shadow-md">
-          <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+      {/* Obstacle Alert & Range Reduction Banner */}
+      {roverState && (roverState.isObstacleDetected || roverState.scanMode === 'obstacle_reduced_sweep') && (
+        <div className="bg-amber-950/70 border border-amber-500/60 rounded-lg p-2.5 flex items-start gap-2.5 text-amber-200 shadow-md">
+          <AlertOctagon className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 animate-pulse" />
           <div className="flex flex-col gap-0.5">
-            <span className="font-bold text-rose-300 text-xs">
-              ¡Obstáculo Detectado ({roverState.currentDistanceCm.toFixed(1)} cm)! Muestreo Detenido
+            <span className="font-bold text-amber-300 text-xs">
+              ¡Obstáculo a {roverState.currentDistanceCm.toFixed(1)} cm! Rango reducido a ±10° (0 a 10° y 0 a -10°)
             </span>
-            <span className="text-[11px] text-rose-200/90 leading-tight">
-              Pulsa <strong>IZQ</strong> o <strong>DER</strong> para girar el coche y reiniciar el senso automáticamente.
+            <span className="text-[11px] text-amber-200/90 leading-tight">
+              Muestreo continuo activo. Al girar el bot con <strong>IZQ</strong> o <strong>DER</strong> volverá automáticamente al rango normal (0 a 30° y 0 a -30°).
             </span>
           </div>
         </div>
