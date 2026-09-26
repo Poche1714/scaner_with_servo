@@ -1,0 +1,104 @@
+export interface DiscoveredPoint2D {
+  id: string;
+  worldX: number; // cm in global coordinate system
+  worldY: number; // cm in global coordinate system
+  robotX: number; // position of robot when detected
+  robotY: number;
+  robotHeading: number; // heading of robot when detected
+  sensorAngle: number; // 0° to 180° relative to robot
+  distanceCm: number; // 2cm to 400cm
+  timestamp: number;
+  sweepCycle: number;
+  hits: number;
+  type: 'wall' | 'obstacle' | 'anomaly';
+}
+
+export interface TrajectoryPoint {
+  id: string;
+  x: number; // cm in global coordinate system
+  y: number; // cm in global coordinate system
+  heading: number; // degrees
+  timestamp: number;
+  distanceFromStartCm: number;
+  speed: number; // cm/s
+  isWaypoint?: boolean;
+  waypointLabel?: string;
+}
+
+export interface Waypoint {
+  id: string;
+  x: number;
+  y: number;
+  label: string;
+  timestamp: number;
+  color?: string;
+  icon?: string;
+}
+
+export interface BotPose {
+  x: number; // cm
+  y: number; // cm
+  heading: number; // 0° to 360° (90° is North / +Y, 0° is East / +X)
+  speed: number; // cm/s
+  isMoving: boolean;
+  driveMode: 'manual' | 'autonomous' | 'paused';
+  totalDistanceCm: number;
+}
+
+export type SweepDirection = 'forward' | 'backward'; // 0->180 or 180->0
+
+export interface RoverSweepState {
+  currentAngle: number; // 0 to 180 relative to bot front
+  targetAngle: number;
+  sweepDirection: SweepDirection;
+  isScanning: boolean;
+  sweepPeriodSeconds: number; // Exactly 20s as requested
+  elapsedInSweepSeconds: number; // 0 to 20.0s
+  totalSweepsCompleted: number;
+  currentDistanceCm: number;
+  maxRangeCm: number; // 100, 200, 300, 400 cm
+}
+
+export type GameVisualTheme = 'tactical_radar' | 'dungeon_pixel' | 'cyber_sonar' | 'blueprint';
+
+export type MapEnvironmentPreset = 'dungeon_chamber' | 'lunar_ruins' | 'room_interior' | 'corridor_maze';
+
+export interface RouteStats {
+  totalDistanceMeters: number;
+  activeDriveTimeSeconds: number;
+  pointsRecordedCount: number;
+  waypointsCount: number;
+  currentSpeedCmS: number;
+  averageSpeedCmS: number;
+  obstaclesDetectedCount: number;
+  fogClearedPercentage: number;
+  currentSectorName: string;
+  bounds: { minX: number; maxX: number; minY: number; maxY: number };
+}
+
+export interface ExplorationStats {
+  fogClearedPercentage: number;
+  totalAreaM2: number;
+  obstaclesDetectedCount: number;
+  activeScanTimeSeconds: number;
+  currentSectorName: string;
+  maxRangeReachedCm: number;
+  anomaliesFound: number;
+  totalDistanceTraveledM: number;
+  routePointsCount: number;
+}
+
+export interface UltrasonicPacket {
+  angle: number;
+  distanceCm: number;
+  valid: boolean;
+  timestamp: number;
+}
+
+export interface SerialErrorInfo {
+  code: 'LOCKED_OR_IN_USE' | 'PERMISSION_DENIED' | 'UNSUPPORTED' | 'DISCONNECTED' | 'UNKNOWN';
+  title: string;
+  message: string;
+  reasons: string[];
+  solutions: string[];
+}
