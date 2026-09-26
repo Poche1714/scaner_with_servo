@@ -762,13 +762,28 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
             </span>
             <span
               className={`text-[9px] px-1 py-0.2 rounded font-sans uppercase font-bold ${
-                roverState.currentDistanceCm <= roverState.obstacleThresholdCm
+                roverState.scanMode === 'obstacle_focused_survey'
+                  ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 animate-pulse'
+                  : roverState.currentDistanceCm <= roverState.obstacleThresholdCm
                   ? 'bg-rose-500/30 text-rose-300 border border-rose-500/40'
                   : 'bg-emerald-500/20 text-emerald-300'
               }`}
             >
-              {roverState.scanMode === 'narrow_patrol' ? '±15°' : '180°'}
+              {roverState.scanMode === 'obstacle_focused_survey'
+                ? 'Sondeo (+25°/-10°)'
+                : roverState.scanMode === 'narrow_patrol'
+                ? '±15°'
+                : '±55°'}
             </span>
+          </div>
+
+          {/* Motor PWM Badge */}
+          <div className="bg-neutral-900/85 backdrop-blur-md px-2.5 py-1 rounded-md border border-neutral-800 flex items-center gap-1.5">
+            <span className="text-amber-400 font-bold text-[10px]">PWM:</span>
+            <span className="font-bold text-amber-300 text-xs">
+              {roverState.motorPwm ?? 185}
+            </span>
+            <span className="text-[9px] text-neutral-500">(175-198)</span>
           </div>
 
           <div className="bg-neutral-900/85 backdrop-blur-md px-2.5 py-1 rounded-md border border-neutral-800 flex items-center gap-1.5">

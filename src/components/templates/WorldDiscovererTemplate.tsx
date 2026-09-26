@@ -57,6 +57,8 @@ export const WorldDiscovererTemplate: React.FC = () => {
     handleGotoAngle,
     handleToggleScan,
     sendSerialCommand,
+    motorPwm,
+    setMotorPwm,
   } = useWorldDiscoverer();
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -119,20 +121,22 @@ export const WorldDiscovererTemplate: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
           {/* Left Column: Bot Navigation & Sweep Controls (4 cols) */}
           <div className="lg:col-span-4 flex flex-col gap-4" id="rover">
-            {/* Bot Movement & Trajectory Recording Card */}
+            {/* Bot Movement & Trajectory Recording Card with PWM 175-198 */}
             <BotNavigationCard
               botPose={botPose}
               trajectory={trajectory}
               waypoints={waypoints}
               isAutonomous={isAutonomous}
               onToggleAutonomous={toggleAutonomous}
-              onDriveForward={() => driveForward(8)}
-              onDriveBackward={() => driveBackward(8)}
-              onTurnLeft={() => turnLeft(15)}
-              onTurnRight={() => turnRight(15)}
+              onDriveForward={(dist, pwm) => driveForward(dist || 8, pwm)}
+              onDriveBackward={(dist, pwm) => driveBackward(dist || 8, pwm)}
+              onTurnLeft={(deg, pwm) => turnLeft(deg || 15, pwm)}
+              onTurnRight={(deg, pwm) => turnRight(deg || 15, pwm)}
               onStopBot={stopBot}
               onAddWaypoint={() => handleAddWaypoint()}
               onResetRoute={handleResetRoute}
+              motorPwm={motorPwm}
+              onSetMotorPwm={setMotorPwm}
             />
 
             {/* Live 20-Second Sweep Countdown & Angle Gauge */}

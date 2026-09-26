@@ -1,6 +1,6 @@
 import React from 'react';
 import { RoverSweepState } from '../../types/worldDiscoverer';
-import { Timer, Compass, ArrowRightLeft, ShieldAlert, Radio, CheckCircle2 } from 'lucide-react';
+import { Timer, Compass, ArrowRightLeft, ShieldAlert, Radio, CheckCircle2, Target, ScanLine } from 'lucide-react';
 
 interface SweepProgressTimerProps {
   roverState: RoverSweepState;
@@ -11,24 +11,28 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
     currentAngle,
     relativeAngle,
     sweepDirection,
-    isScanning,
     scanMode,
     isObstacleDetected,
     obstacleDistanceCm,
+    obstacleDetectedAngle,
     obstacleThresholdCm,
-    sweepPeriodSeconds,
-    elapsedInSweepSeconds,
+    surveyMinAngle,
+    surveyMaxAngle,
+    surveyStepDirection,
     totalSweepsCompleted,
     currentDistanceCm,
   } = roverState;
 
+  const isFocusedSurvey = scanMode === 'obstacle_focused_survey';
   const isNarrow = scanMode === 'narrow_patrol';
   const isClose = currentDistanceCm <= obstacleThresholdCm;
 
   return (
     <div
       className={`rounded-xl p-3.5 flex flex-col gap-3 transition-colors border shadow-lg ${
-        isClose
+        isFocusedSurvey
+          ? 'bg-amber-950/40 border-amber-500/50 shadow-amber-950/30'
+          : isClose
           ? 'bg-rose-950/40 border-rose-500/50 shadow-rose-950/30'
           : 'bg-neutral-900/90 border-neutral-800'
       }`}
@@ -36,33 +40,45 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
       {/* Header with Mode Status */}
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">
-          {isClose ? (
+          {isFocusedSurvey ? (
+            <Target className="w-4 h-4 text-amber-400 animate-spin" />
+          ) : isClose ? (
             <ShieldAlert className="w-4 h-4 text-rose-400 animate-pulse" />
           ) : (
             <Radio className="w-4 h-4 text-emerald-400" />
           )}
           <span className="font-semibold text-neutral-100">
-            {isNarrow
-              ? 'Sondeo Frontal Estrecho (±15°)'
-              : 'Sondeo Panorámico 180° (-90° a +90°)'}
+            {isFocusedSurvey
+              ? `Sondeo Enfocado (+25° / -10°)`
+              : isNarrow
+              ? 'Vigilancia Frontal (0° ±15°)'
+              : 'Barrido Delimitado (-55° a +55°)'}
           </span>
         </div>
 
         <span
           className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium border ${
-            isClose
+            isFocusedSurvey
+              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+              : isClose
               ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse'
               : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
           }`}
         >
-          {isClose ? '¡OBSTÁCULO <= 40cm!' : 'VÍA DESPEJADA'}
+          {isFocusedSurvey
+            ? `SONDEO OBJETO (${obstacleDetectedAngle !== null ? (obstacleDetectedAngle > 0 ? `+${obstacleDetectedAngle}°` : `${obstacleDetectedAngle}°`) : ''})`
+            : isClose
+            ? '¡OBSTÁCULO <= 40cm!'
+            : 'VÍA DESPEJADA'}
         </span>
       </div>
 
-      {/* Prominent Distance Return in CM (Direct response to "Devuelve los cm al que esta el objeto") */}
+      {/* Prominent Distance Return in CM (Devuelve los cm al que esta el objeto) */}
       <div
         className={`p-3 rounded-lg border flex items-center justify-between font-mono ${
-          isClose
+          isFocusedSurvey
+            ? 'bg-amber-950/60 border-amber-500/40 text-amber-100'
+            : isClose
             ? 'bg-rose-950/60 border-rose-500/40 text-rose-100'
             : 'bg-neutral-950 border-neutral-800 text-neutral-100'
         }`}
@@ -89,21 +105,27 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
 
         {/* Status indicator tag */}
         <div className="flex flex-col items-end text-[11px]">
-          <span className="text-neutral-400 text-[10px]">UMBRAL DISPARO</span>
-          <span className="font-bold text-neutral-300">{obstacleThresholdCm} cm</span>
-          {isClose ? (
-            <span className="text-rose-400 font-bold text-[10px] flex items-center gap-1 mt-0.5">
-              <span>●</span> Barrido 180° Activado
+          <span className="text-neutral-400 text-[10px]">SINCRONIZACIÓN</span>
+          <span className="font-bold text-cyan-300 font-mono text-[10px] bg-cyan-950/60 px-1.5 py-0.5 rounded border border-cyan-800/50">
+            Cero Desfase (Zero-Lag)
+          </span>
+          {isFocusedSurvey ? (
+            <span className="text-amber-400 font-bold text-[10px] flex items-center gap-1 mt-1">
+              <span>●</span> +25° y -10° mapeando
+            </span>
+          ) : isClose ? (
+            <span className="text-rose-400 font-bold text-[10px] flex items-center gap-1 mt-1">
+              <span>●</span> Umbral 40 cm disparado
             </span>
           ) : (
-            <span className="text-emerald-400 font-medium text-[10px] flex items-center gap-1 mt-0.5">
+            <span className="text-emerald-400 font-medium text-[10px] flex items-center gap-1 mt-1">
               <CheckCircle2 className="w-3 h-3" /> Vigilancia 0° ± 15°
             </span>
           )}
         </div>
       </div>
 
-      {/* Angle Gauge: Absolute Servo (0°-180°) & Relative to Center 90° (-90° to +90°) */}
+      {/* Angle Gauge: Absolute Servo & Relative to Center 90° (with ±55° limit) */}
       <div className="grid grid-cols-2 gap-2 text-xs bg-neutral-950/70 p-2.5 rounded-lg border border-neutral-800/80 font-mono">
         <div className="flex items-center gap-2">
           <Compass className="w-3.5 h-3.5 text-cyan-400" />
@@ -111,7 +133,7 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
             <span className="text-[10px] text-neutral-500 font-sans">ÁNGULO SERVO</span>
             <span className="text-cyan-300 font-bold text-sm">
               {Math.round(currentAngle)}°
-              <span className="text-[11px] text-neutral-500 font-normal ml-1">
+              <span className="text-[10px] text-neutral-500 font-normal ml-1">
                 (Inicio: 90°)
               </span>
             </span>
@@ -137,14 +159,24 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
         </div>
       </div>
 
-      {/* Visual Scan Arc representation */}
+      {/* Focused Survey Details & Scan Arc */}
       <div className="flex flex-col gap-1 text-[11px] text-neutral-400">
         <div className="flex items-center justify-between text-[10px] font-mono">
-          <span className="text-neutral-500">
-            {isNarrow ? 'Rango Activo: 75° a 105° (0° ±15°)' : 'Rango Activo: 0° a 180° (-90° a +90°)'}
+          <span className="text-neutral-400">
+            {isFocusedSurvey && surveyMinAngle != null && surveyMaxAngle != null
+              ? `Sondeo objeto: ${Math.round(surveyMinAngle - 90)}° a +${Math.round(surveyMaxAngle - 90)}°`
+              : isNarrow
+              ? 'Rango Normal: 75° a 105° (0° ±15°)'
+              : 'Límite Obstáculo: 35° a 145° (-55° a +55°)'}
           </span>
           <span className="text-neutral-500">
-            {sweepDirection === 'forward' ? 'Hacia Izquierda (+)' : 'Hacia Derecha (-)'}
+            {isFocusedSurvey
+              ? surveyStepDirection === 1
+                ? 'Paso: Registrando +25°'
+                : 'Paso: Registrando -10°'
+              : sweepDirection === 'forward'
+              ? 'Hacia Izquierda (+)'
+              : 'Hacia Derecha (-)'}
           </span>
         </div>
 
@@ -152,7 +184,9 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
         <div className="relative w-full h-2 bg-neutral-950 rounded-full overflow-hidden border border-neutral-800">
           <div
             className={`h-full transition-all duration-75 ease-linear rounded-full ${
-              isClose
+              isFocusedSurvey
+                ? 'bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300'
+                : isClose
                 ? 'bg-gradient-to-r from-rose-500 to-amber-500 animate-pulse'
                 : 'bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-400'
             }`}

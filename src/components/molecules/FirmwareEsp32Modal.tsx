@@ -27,10 +27,10 @@ export const FirmwareEsp32Modal: React.FC<FirmwareEsp32ModalProps> = ({ isOpen, 
             <Cpu className="w-5 h-5 text-amber-400" />
             <div>
               <h2 className="text-sm font-bold text-neutral-100">
-                Firmware ESP32 — Sonar Inteligente & Trayecto (Inicio 90°, Sondeo ±15°, 180° a ≤ 40 cm)
+                Firmware ESP32 — Sonar Cero Desfase, Sondeo Enfocado & Motores PWM (175 a 198)
               </h2>
               <p className="text-[11px] text-neutral-400">
-                Arduino C++ con retorno de distancia en cm y barrido panorámico condicional
+                Arduino C++ con sincronización eco-servo, sondeo de objeto (+25°/-10°) y PWM hardware
               </p>
             </div>
           </div>
@@ -79,9 +79,9 @@ export const FirmwareEsp32Modal: React.FC<FirmwareEsp32ModalProps> = ({ isOpen, 
                 <span className="text-neutral-500 block text-[10px] mt-0.5">Lectura microsegundos</span>
               </div>
               <div className="bg-neutral-900 p-2.5 rounded-lg border border-neutral-800">
-                <span className="text-neutral-500 block text-[10px]">MOTORES (OPCIONAL)</span>
+                <span className="text-neutral-500 block text-[10px]">MOTORES PWM (175-198)</span>
                 <span className="font-mono text-purple-400 font-medium">L: 25,26 | R: 32,33</span>
-                <span className="text-neutral-500 block text-[10px] mt-0.5">Driver L298N / TB6612</span>
+                <span className="text-neutral-500 block text-[10px] mt-0.5">LEDC Hardware PWM</span>
               </div>
             </div>
           </div>
@@ -89,12 +89,13 @@ export const FirmwareEsp32Modal: React.FC<FirmwareEsp32ModalProps> = ({ isOpen, 
           {/* Sweep & Motion Specs */}
           <div className="bg-neutral-950/80 rounded-xl border border-neutral-800 p-3.5 flex flex-wrap items-center justify-between gap-2 text-neutral-300">
             <div>
-              <span className="font-semibold text-emerald-400">Algoritmo de Sondeo Inteligente:</span>
-              <p className="text-[11px] text-neutral-400 mt-0.5">
-                • Inicio en 90° (0° relativo).<br />
-                • Sondeo frontal estrecho de 0 a 15° y 0 a -15° (75° a 105°).<br />
-                • Al detectar obstáculo a &le; 40 cm se activa barrido panorámico de -90° a +90° (0° a 180°).<br />
-                • Telemetría continua devolviendo los cm exactos: <code>PING:angulo,dist</code> y <code>DIST:dist</code>.
+              <span className="font-semibold text-emerald-400">Algoritmo de Sondeo & Control de Tracción:</span>
+              <p className="text-[11px] text-neutral-400 mt-0.5 leading-relaxed">
+                • <strong>Sincronización Cero Desfase:</strong> Retardo de estabilización mecánica antes de emitir el pulso TRIG, asociando la distancia al ángulo exacto estacionario.<br />
+                • <strong>Punto de Inicio:</strong> 90° (0° relativo / Frente). Sondeo normal de 0 a 15° y de 0 a -15° (75° a 105°).<br />
+                • <strong>Detección de Obstáculo (&le; 40 cm):</strong> Límite de seguridad delimitado a <strong>-55° a +55°</strong> (no -90° a 90°).<br />
+                • <strong>Sondeo Enfocado del Objeto:</strong> Registra los siguientes <strong>+25° más</strong> y los <strong>-10° menos</strong> del obstáculo detectado, y regresa automáticamente al estado normal.<br />
+                • <strong>Control Motores PWM:</strong> Canales LEDC con valores de <strong>175 a 198</strong> para un control de tracción y velocidad preciso.
               </p>
             </div>
             <div className="font-mono text-neutral-400 text-[11px] bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800 self-start">

@@ -95,11 +95,11 @@ export const RoverRadarControls: React.FC<RoverRadarControlsProps> = ({
         {/* Quick Angle Preset Buttons */}
         <div className="grid grid-cols-5 gap-1 pt-1">
           {[
-            { label: '0° (-90°)', angle: 0 },
+            { label: '35° (-55°)', angle: 35 },
             { label: '75° (-15°)', angle: 75 },
             { label: '90° (0°)', angle: 90 },
             { label: '105° (+15°)', angle: 105 },
-            { label: '180° (+90°)', angle: 180 },
+            { label: '145° (+55°)', angle: 145 },
           ].map((preset) => (
             <button
               key={preset.angle}
@@ -116,7 +116,7 @@ export const RoverRadarControls: React.FC<RoverRadarControlsProps> = ({
           ))}
         </div>
         <p className="text-[10px] text-neutral-400 font-mono mt-0.5">
-          Inicio: <strong className="text-neutral-200">90°</strong> (0° relativo). Sondeo: <strong className="text-emerald-300">±15°</strong>. Al detectar objeto a <strong className="text-rose-400">&le; 40 cm</strong> se expande a <strong className="text-amber-300">-90° a +90°</strong>.
+          Inicio: <strong className="text-neutral-200">90°</strong> (0° relativo). Sondeo: <strong className="text-emerald-300">±15°</strong>. Al detectar obstáculo (&le; 40 cm): sondeo enfocado <strong className="text-amber-300">(+25° y -10°)</strong>, límite <strong className="text-cyan-400">-55° a +55°</strong>.
         </p>
       </div>
 

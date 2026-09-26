@@ -10,9 +10,11 @@ import {
   MapPin,
   RotateCcw,
   Sparkles,
-  Compass,
-  Footprints,
-  Activity,
+  Zap,
+  Gauge,
+  Sliders,
+  Play,
+  RotateCw,
 } from 'lucide-react';
 
 interface BotNavigationCardProps {
@@ -21,13 +23,15 @@ interface BotNavigationCardProps {
   waypoints: Waypoint[];
   isAutonomous: boolean;
   onToggleAutonomous: () => void;
-  onDriveForward: () => void;
-  onDriveBackward: () => void;
-  onTurnLeft: () => void;
-  onTurnRight: () => void;
+  onDriveForward: (distCm?: number, customPwm?: number) => void;
+  onDriveBackward: (distCm?: number, customPwm?: number) => void;
+  onTurnLeft: (deg?: number, customPwm?: number) => void;
+  onTurnRight: (deg?: number, customPwm?: number) => void;
   onStopBot: () => void;
   onAddWaypoint: () => void;
   onResetRoute: () => void;
+  motorPwm?: number;
+  onSetMotorPwm?: (pwm: number) => void;
   disabled?: boolean;
 }
 
@@ -44,8 +48,26 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
   onStopBot,
   onAddWaypoint,
   onResetRoute,
+  motorPwm = 185,
+  onSetMotorPwm,
   disabled = false,
 }) => {
+  // Calibrated PWM preset options between 175 and 198
+  const pwmPresets = [
+    { label: '175', note: 'Mínimo', pwm: 175 },
+    { label: '180', note: 'Suave', pwm: 180 },
+    { label: '185', note: 'Equilibrado', pwm: 185 },
+    { label: '190', note: 'Crucero', pwm: 190 },
+    { label: '195', note: 'Ágil', pwm: 195 },
+    { label: '198', note: 'Máx', pwm: 198 },
+  ];
+
+  const handlePwmSelect = (value: number) => {
+    if (onSetMotorPwm) {
+      onSetMotorPwm(value);
+    }
+  };
+
   return (
     <div className="bg-neutral-900/90 border border-neutral-800 rounded-xl p-4 flex flex-col gap-4 shadow-lg">
       {/* Header */}
@@ -53,7 +75,7 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
         <div className="flex items-center gap-2">
           <Bot className="w-4 h-4 text-cyan-400" />
           <h3 className="text-sm font-semibold text-neutral-100">
-            Conducción & Registro de Trayecto
+            Conducción & Motores PWM (175 - 198)
           </h3>
         </div>
         <span
@@ -65,7 +87,7 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
               : 'bg-neutral-800 text-neutral-400 border-neutral-700'
           }`}
         >
-          {isAutonomous ? 'Navegación Autónoma' : botPose.isMoving ? 'En Movimiento' : 'Manual / Listo'}
+          {isAutonomous ? 'Navegación Autónoma' : botPose.isMoving ? 'En Movimiento' : 'Listo'}
         </span>
       </div>
 
@@ -91,6 +113,61 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
         </div>
       </div>
 
+      {/* Motor PWM Selector (175 - 198) */}
+      <div className="bg-neutral-950 p-3 rounded-lg border border-neutral-800/90 flex flex-col gap-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-xs font-semibold text-neutral-200">
+              Potencia Motores (PWM 175 a 198)
+            </span>
+          </div>
+          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/30">
+            PWM: {motorPwm}
+          </span>
+        </div>
+
+        {/* Preset Buttons for PWM 175 - 198 */}
+        <div className="grid grid-cols-6 gap-1">
+          {pwmPresets.map((preset) => {
+            const isSelected = motorPwm === preset.pwm;
+            return (
+              <button
+                key={preset.pwm}
+                type="button"
+                onClick={() => handlePwmSelect(preset.pwm)}
+                disabled={disabled}
+                className={`flex flex-col items-center justify-center py-1.5 px-1 rounded text-center transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-amber-500 text-neutral-950 font-bold shadow-md shadow-amber-500/20'
+                    : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 border border-neutral-800'
+                }`}
+                title={`Configurar PWM a ${preset.pwm} (${preset.note})`}
+              >
+                <span className="text-[11px] font-mono leading-tight">{preset.label}</span>
+                <span className="text-[9px] opacity-75 leading-tight">{preset.note}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Slider for Fine-Tuning PWM between 175 and 198 */}
+        <div className="flex items-center gap-3 pt-1">
+          <span className="text-[10px] font-mono text-neutral-500">175</span>
+          <input
+            type="range"
+            min="175"
+            max="198"
+            step="1"
+            value={motorPwm}
+            onChange={(e) => handlePwmSelect(parseInt(e.target.value, 10))}
+            disabled={disabled}
+            className="w-full h-1.5 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-amber-500"
+          />
+          <span className="text-[10px] font-mono text-neutral-500">198</span>
+        </div>
+      </div>
+
       {/* Autonomous Navigation Toggle Button */}
       <button
         onClick={onToggleAutonomous}
@@ -107,56 +184,89 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
         </span>
       </button>
 
-      {/* D-Pad Virtual Steering Controls */}
-      <div className="flex flex-col items-center gap-1.5 py-1">
+      {/* D-Pad Virtual Steering Controls with Active PWM */}
+      <div className="flex flex-col items-center gap-2 py-1">
         {/* Forward */}
         <button
-          onClick={onDriveForward}
+          onClick={() => onDriveForward(8, motorPwm)}
           disabled={disabled || isAutonomous}
-          className="w-12 h-11 bg-neutral-800 hover:bg-neutral-700 active:bg-cyan-600 text-neutral-200 active:text-white rounded-lg flex items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-          title="Avanzar (W / Flecha Arriba)"
+          className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+          title={`Avanzar con PWM ${motorPwm} (W / Flecha Arriba)`}
         >
           <ArrowUp className="w-5 h-5" />
+          <span className="text-[9px] font-mono opacity-60">FWD</span>
         </button>
 
         {/* Left - Stop - Right */}
         <div className="flex items-center gap-2">
           <button
-            onClick={onTurnLeft}
+            onClick={() => onTurnLeft(15, motorPwm)}
             disabled={disabled || isAutonomous}
-            className="w-12 h-11 bg-neutral-800 hover:bg-neutral-700 active:bg-cyan-600 text-neutral-200 active:text-white rounded-lg flex items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-            title="Girar Izquierda (A / Flecha Izquierda)"
+            className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+            title={`Girar Izquierda 15° con PWM ${motorPwm} (A / Flecha Izquierda)`}
           >
             <ArrowLeft className="w-5 h-5" />
+            <span className="text-[9px] font-mono opacity-60">IZQ</span>
           </button>
 
           <button
             onClick={onStopBot}
             disabled={disabled}
-            className="w-12 h-11 bg-rose-500/20 hover:bg-rose-500/30 active:bg-rose-600 text-rose-400 active:text-white rounded-lg flex items-center justify-center transition-colors border border-rose-500/40 cursor-pointer"
-            title="Detener Bot (Espacio)"
+            className="w-14 h-12 bg-rose-500/20 hover:bg-rose-500/30 active:bg-rose-600 text-rose-400 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-rose-500/40 cursor-pointer"
+            title="Detener Motores (Espacio)"
           >
             <Square className="w-4 h-4 fill-current" />
+            <span className="text-[9px] font-mono opacity-80">PARAR</span>
           </button>
 
           <button
-            onClick={onTurnRight}
+            onClick={() => onTurnRight(15, motorPwm)}
             disabled={disabled || isAutonomous}
-            className="w-12 h-11 bg-neutral-800 hover:bg-neutral-700 active:bg-cyan-600 text-neutral-200 active:text-white rounded-lg flex items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-            title="Girar Derecha (D / Flecha Derecha)"
+            className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+            title={`Girar Derecha 15° con PWM ${motorPwm} (D / Flecha Derecha)`}
           >
             <ArrowRight className="w-5 h-5" />
+            <span className="text-[9px] font-mono opacity-60">DER</span>
           </button>
         </div>
 
         {/* Backward */}
         <button
-          onClick={onDriveBackward}
+          onClick={() => onDriveBackward(8, motorPwm)}
           disabled={disabled || isAutonomous}
-          className="w-12 h-11 bg-neutral-800 hover:bg-neutral-700 active:bg-cyan-600 text-neutral-200 active:text-white rounded-lg flex items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-          title="Retroceder (S / Flecha Abajo)"
+          className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+          title={`Retroceder con PWM ${motorPwm} (S / Flecha Abajo)`}
         >
           <ArrowDown className="w-5 h-5" />
+          <span className="text-[9px] font-mono opacity-60">REV</span>
+        </button>
+      </div>
+
+      {/* Quick Impulse Buttons */}
+      <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
+        <button
+          onClick={() => onDriveForward(12, motorPwm)}
+          disabled={disabled || isAutonomous}
+          className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+          title="Impulso de avance calibrado 12cm"
+        >
+          Paso +12cm
+        </button>
+        <button
+          onClick={() => onTurnLeft(30, motorPwm)}
+          disabled={disabled || isAutonomous}
+          className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+          title="Giro izquierda 30°"
+        >
+          Giro 30° Izq
+        </button>
+        <button
+          onClick={() => onTurnRight(30, motorPwm)}
+          disabled={disabled || isAutonomous}
+          className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+          title="Giro derecha 30°"
+        >
+          Giro 30° Der
         </button>
       </div>
 
@@ -178,7 +288,7 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
           className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-cyan-300 bg-cyan-950/40 border border-cyan-500/30 hover:bg-cyan-900/50 transition-colors cursor-pointer"
         >
           <MapPin className="w-3.5 h-3.5" />
-          <span>Fijar Hito / Hito #{waypoints.length + 1}</span>
+          <span>Fijar Hito #{waypoints.length + 1}</span>
         </button>
 
         <button

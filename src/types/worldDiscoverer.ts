@@ -47,10 +47,13 @@ export interface BotPose {
 
 export type SweepDirection = 'forward' | 'backward';
 
-export type ScanMode = 'narrow_patrol' | 'obstacle_panoramic'; // ±15° vs -90° to +90° (0° to 180°)
+export type ScanMode = 
+  | 'narrow_patrol'           // Vigilancia normal ±15° (de -15° a +15° relativo, 75° a 105° servo)
+  | 'obstacle_focused_survey' // Sondeo enfocado del objeto detectado (+25° más y -10° menos)
+  | 'obstacle_panoramic';     // Barrido de seguridad delimitado a -55° y +55° relativo (35° a 145° servo)
 
 export interface RoverSweepState {
-  currentAngle: number; // 0 to 180 (90° is center forward)
+  currentAngle: number; // 0 to 180 (90° is center forward / 0° relativo)
   relativeAngle: number; // -90° to +90° (0° is forward)
   targetAngle: number;
   sweepDirection: SweepDirection;
@@ -58,12 +61,18 @@ export interface RoverSweepState {
   scanMode: ScanMode;
   isObstacleDetected: boolean;
   obstacleDistanceCm: number | null; // Exact cm to detected obstacle
+  obstacleDetectedAngle: number | null; // Exact relative angle where obstacle was spotted
   obstacleThresholdCm: number; // 40 cm trigger
+  // Focused object survey window: [detected - 10°, detected + 25°]
+  surveyMinAngle: number | null;
+  surveyMaxAngle: number | null;
+  surveyStepDirection: 1 | -1;
   sweepPeriodSeconds: number; // seconds for cycle
   elapsedInSweepSeconds: number;
   totalSweepsCompleted: number;
   currentDistanceCm: number;
   maxRangeCm: number; // 100, 200, 300, 400 cm
+  motorPwm: number; // PWM value between 175 and 198
 }
 
 export type GameVisualTheme = 'tactical_radar' | 'dungeon_pixel' | 'cyber_sonar' | 'blueprint';
