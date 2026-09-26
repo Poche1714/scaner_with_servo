@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Send, Trash2, Radio, Activity } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Terminal, Send, Trash2, Radio, Activity, Eye, EyeOff } from 'lucide-react';
 
 interface ScoutConsoleOrganismProps {
   logs: { time: string; text: string; dir: 'in' | 'out' | 'sys' }[];
@@ -19,11 +19,17 @@ export const ScoutConsoleOrganism: React.FC<ScoutConsoleOrganismProps> = ({
   onClearLogs,
 }) => {
   const [inputCmd, setInputCmd] = useState('');
+  const [hideReceived, setHideReceived] = useState(false);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
+
+  const visibleLogs = useMemo(() => {
+    if (!hideReceived) return logs;
+    return logs.filter((log) => log.dir !== 'in');
+  }, [logs, hideReceived]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  }, [visibleLogs]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +77,7 @@ export const ScoutConsoleOrganism: React.FC<ScoutConsoleOrganismProps> = ({
       </div>
 
       {/* Terminal Title & Controls */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-neutral-400" />
           <h4 className="text-xs font-semibold text-neutral-200">Monitor Serie & Comandos ESP32</h4>
@@ -80,21 +86,58 @@ export const ScoutConsoleOrganism: React.FC<ScoutConsoleOrganismProps> = ({
           </span>
         </div>
 
-        <button
-          onClick={onClearLogs}
-          className="text-neutral-500 hover:text-neutral-300 p-1 rounded hover:bg-neutral-800 transition-colors"
-          title="Limpiar Consola"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {/* Botón para ocultar/mostrar datos recibidos (RX) */}
+          <button
+            type="button"
+            onClick={() => setHideReceived((prev) => !prev)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs transition-colors font-medium cursor-pointer ${
+              hideReceived
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800 border border-neutral-800'
+            }`}
+            title={hideReceived ? 'Mostrar datos recibidos en el puerto serial (RX)' : 'Ocultar datos recibidos en el puerto serial (RX)'}
+          >
+            {hideReceived ? (
+              <>
+                <EyeOff className="w-3.5 h-3.5 text-amber-400" />
+                <span>Datos RX Ocultos</span>
+              </>
+            ) : (
+              <>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Ocultar RX</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={onClearLogs}
+            className="text-neutral-500 hover:text-neutral-300 p-1 rounded hover:bg-neutral-800 transition-colors cursor-pointer"
+            title="Limpiar Consola"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Log Output Screen */}
       <div className="h-36 bg-neutral-950 rounded-lg p-2.5 font-mono text-[11px] overflow-y-auto border border-neutral-800 flex flex-col gap-1 select-text">
-        {logs.length === 0 ? (
-          <span className="text-neutral-600 italic">Esperando telemetría de sondeo...</span>
+        {hideReceived && (
+          <div className="bg-amber-950/40 border border-amber-500/30 rounded px-2 py-1 text-[10px] text-amber-300/90 flex items-center justify-between select-none">
+            <span>Telemetría RX (PING/DIST) oculta — Mostrando comandos enviados y sistema</span>
+            <span className="text-amber-400/80 font-bold">{logs.filter((l) => l.dir === 'in').length} ocultos</span>
+          </div>
+        )}
+
+        {visibleLogs.length === 0 ? (
+          <span className="text-neutral-600 italic">
+            {hideReceived
+              ? 'No hay comandos ni eventos de sistema (los datos RX recibidos están ocultos).'
+              : 'Esperando telemetría de sondeo...'}
+          </span>
         ) : (
-          logs.map((log, index) => (
+          visibleLogs.map((log, index) => (
             <div key={index} className="flex items-start gap-2 leading-relaxed">
               <span className="text-neutral-600 select-none text-[10px]">{log.time}</span>
               <span

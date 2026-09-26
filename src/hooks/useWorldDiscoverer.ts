@@ -186,63 +186,10 @@ export function useWorldDiscoverer() {
       const beamRad = (beamAngleDeg * Math.PI) / 180;
 
       setPoints((prev) => {
-        // 1. REGLA DE BORRADO DE PAREDES:
-        // Validar 3 veces este mismo punto: las tres medidas deben estar por encima de 70 cm para borrarla.
-        // En caso de que una de ellas vuelva a dar por debajo de este valor (<= 70 cm), NO se borra y se reinicia el contador.
-        let pointDeleted = false;
-        const updatedPoints: DiscoveredPoint2D[] = [];
-
-        for (const p of prev) {
-          const dx = p.worldX - currentBot.x;
-          const dy = p.worldY - currentBot.y;
-          const distToP = Math.hypot(dx, dy);
-
-          // Ángulo desde el bot hacia el punto existente
-          let angleToP = (Math.atan2(dy, dx) * 180) / Math.PI;
-          let angleDiff = Math.abs(angleToP - beamAngleDeg) % 360;
-          if (angleDiff > 180) angleDiff = 360 - angleDiff;
-
-          // Si el punto cae dentro del haz del sensor (cono de visión de ~9°)
-          if (angleDiff < 9.0) {
-            // El haz del sonar apunta hacia este punto
-            if (distanceCm > 70.0 && distanceCm > distToP + 6.0) {
-              // Medida actual por encima de 70 cm y el haz atraviesa libremente más allá del punto
-              const currentConfirmations = (p.clearConfirmations || 0) + 1;
-              if (currentConfirmations >= 3) {
-                // ¡Validado 3 veces consecutivas por encima de 70 cm! SE BORRA LA PARED
-                pointDeleted = true;
-                continue; // No incluir en updatedPoints (se borra)
-              } else {
-                // Aún no llega a 3 validaciones: incrementar y mantener en el mapa
-                updatedPoints.push({
-                  ...p,
-                  clearConfirmations: currentConfirmations,
-                });
-                continue;
-              }
-            } else if (distanceCm <= 70.0 && Math.abs(distanceCm - distToP) < 14.0) {
-              // "en caso de que una de ellas vuelva a dar por debajo de este valor no se borra"
-              // Se detectó pared u obstáculo en la zona: reiniciar el contador a 0
-              updatedPoints.push({
-                ...p,
-                clearConfirmations: 0,
-              });
-              continue;
-            }
-          }
-
-          // Fuera del haz o sin cambio: mantener el punto intacto
-          updatedPoints.push(p);
-        }
-
-        if (pointDeleted) {
-          addLog('Pared validada 3 veces despejada (> 70 cm): PARED BORRADA del simulador.', 'sys');
-        }
-
-        // 2. REGLA ESTRICTA DE PINTADO: "solo pinte las paredes si la distancia es menor a 70 cm"
+        // REGLA: "como quedan dibujadas las paredes sin borrarse"
+        // Las paredes descubiertas permanecen dibujadas permanentemente en el mapa sin borrarse.
         if (distanceCm >= 70.0) {
-          // No pintar pared en el simulador si la distancia es >= 70 cm
-          return updatedPoints;
+          return prev;
         }
 
         // Calcular coordenadas globales exactas para la pared a distancia < 70 cm
@@ -257,13 +204,13 @@ export function useWorldDiscoverer() {
           worldY = Number((currentBot.y + distanceCm * Math.sin(beamRad)).toFixed(1));
         }
 
-        // Spatial clustering: reforzar si está dentro de 7cm
-        const existingIdx = updatedPoints.findIndex(
+        // Spatial clustering: reforzar si está dentro de 7cm sin borrar otros puntos
+        const existingIdx = prev.findIndex(
           (p) => Math.hypot(p.worldX - worldX, p.worldY - worldY) < 7.0
         );
 
         if (existingIdx >= 0) {
-          const updated = [...updatedPoints];
+          const updated = [...prev];
           const item = updated[existingIdx];
           updated[existingIdx] = {
             ...item,
@@ -272,7 +219,6 @@ export function useWorldDiscoverer() {
             distanceCm,
             worldX,
             worldY,
-            clearConfirmations: 0, // Reiniciar validaciones de borrado porque dio <= 70 cm
             type: classification || item.type,
           };
           return updated;
@@ -290,14 +236,13 @@ export function useWorldDiscoverer() {
           timestamp: now,
           sweepCycle: roverState.totalSweepsCompleted,
           hits: 1,
-          clearConfirmations: 0,
           type: classification || (distanceCm < 40 ? 'obstacle' : 'wall'),
         };
 
-        if (updatedPoints.length > 900) {
-          return [...updatedPoints.slice(updatedPoints.length - 899), newPoint];
+        if (prev.length > 1200) {
+          return [...prev.slice(prev.length - 1199), newPoint];
         }
-        return [...updatedPoints, newPoint];
+        return [...prev, newPoint];
       });
     },
     [roverState.totalSweepsCompleted, addLog]
@@ -788,24 +733,30 @@ export function useWorldDiscoverer() {
                   }
                 } else if (line.startsWith('POS:')) {
                   // Real odometry position from ESP32: POS:x,y,heading
-                  const parts = line.substring(4).split(',');
-                  if (parts.length >= 3) {
-                    const rx = parseFloat(parts[0]);
-                    const ry = parseFloat(parts[1]);
-                    const rheading = parseFloat(parts[2]);
-                    if (!isNaN(rx) && !isNaN(ry) && !isNaN(rheading)) {
-                      setBotPose((prev) => {
-                        const distInc = Math.hypot(rx - prev.x, ry - prev.y);
-                        const nextPose: BotPose = {
-                          ...prev,
-                          x: rx,
-                          y: ry,
-                          heading: rheading,
-                          totalDistanceCm: prev.totalDistanceCm + distInc,
-                        };
-                        recordTrajectoryBreadcrumb(nextPose);
-                        return nextPose;
-                      });
+                  if (connectionMode === 'serial') {
+                    const parts = line.substring(4).split(',');
+                    if (parts.length >= 3) {
+                      const rx = parseFloat(parts[0]);
+                      const ry = parseFloat(parts[1]);
+                      const rheading = parseFloat(parts[2]);
+                      if (!isNaN(rx) && !isNaN(ry) && !isNaN(rheading)) {
+                        setBotPose((prev) => {
+                          // Evitar volver a la posición original (0, 30) si el bot ya ha avanzado
+                          if (Math.hypot(rx, ry - 30) < 1.0 && prev.totalDistanceCm > 5.0) {
+                            return prev;
+                          }
+                          const distInc = Math.hypot(rx - prev.x, ry - prev.y);
+                          const nextPose: BotPose = {
+                            ...prev,
+                            x: rx,
+                            y: ry,
+                            heading: rheading,
+                            totalDistanceCm: prev.totalDistanceCm + distInc,
+                          };
+                          recordTrajectoryBreadcrumb(nextPose);
+                          return nextPose;
+                        });
+                      }
                     }
                   }
                 } else if (line.includes('SWEEP_CYCLE_COMPLETE')) {
@@ -1086,7 +1037,12 @@ export function useWorldDiscoverer() {
     obstaclesDetectedCount: points.length,
     fogClearedPercentage: explorationStats.fogClearedPercentage,
     currentSectorName: explorationStats.currentSectorName,
-    bounds: WORLD_PRESETS[preset]?.bounds || { minX: -200, maxX: 200, minY: 0, maxY: 300 },
+    bounds: {
+      minX: Math.min(WORLD_PRESETS[preset]?.bounds?.minX ?? -260, Math.round(botPose.x - 150)),
+      maxX: Math.max(WORLD_PRESETS[preset]?.bounds?.maxX ?? 260, Math.round(botPose.x + 150)),
+      minY: Math.min(WORLD_PRESETS[preset]?.bounds?.minY ?? -40, Math.round(botPose.y - 150)),
+      maxY: Math.max(WORLD_PRESETS[preset]?.bounds?.maxY ?? 420, Math.round(botPose.y + 150)),
+    },
   };
 
   return {

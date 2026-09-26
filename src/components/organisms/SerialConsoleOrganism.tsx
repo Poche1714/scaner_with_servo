@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, Send, Trash2, ChevronDown, ChevronUp, ArrowDown } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Terminal, Send, Trash2, ChevronDown, ChevronUp, ArrowDown, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../atoms/Button';
 
 export interface SerialConsoleProps {
@@ -18,13 +18,19 @@ export const SerialConsoleOrganism: React.FC<SerialConsoleProps> = ({
   const [commandInput, setCommandInput] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [hideReceived, setHideReceived] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const visibleLogs = useMemo(() => {
+    if (!hideReceived) return logs;
+    return logs.filter((l) => l.direction !== 'in');
+  }, [logs, hideReceived]);
 
   useEffect(() => {
     if (autoScroll && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs, autoScroll]);
+  }, [visibleLogs, autoScroll]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,6 +57,30 @@ export const SerialConsoleOrganism: React.FC<SerialConsoleProps> = ({
         <div className="flex items-center gap-2">
           {!isCollapsed && (
             <>
+              {/* Toggle para ocultar/mostrar datos recibidos (RX) */}
+              <button
+                type="button"
+                onClick={() => setHideReceived((prev) => !prev)}
+                className={`flex items-center gap-1 text-[11px] px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                  hideReceived
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-medium'
+                    : 'text-neutral-400 hover:text-neutral-200 bg-neutral-800/80 border border-neutral-700/60'
+                }`}
+                title={hideReceived ? 'Mostrar datos recibidos en serial (RX)' : 'Ocultar datos recibidos en serial (RX)'}
+              >
+                {hideReceived ? (
+                  <>
+                    <EyeOff className="w-3 h-3 text-amber-400" />
+                    <span>RX Ocultos</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3 h-3" />
+                    <span>Ocultar RX</span>
+                  </>
+                )}
+              </button>
+
               <button
                 type="button"
                 onClick={() => setAutoScroll(!autoScroll)}
@@ -78,16 +108,25 @@ export const SerialConsoleOrganism: React.FC<SerialConsoleProps> = ({
       {/* Expandable Console Body */}
       {!isCollapsed && (
         <div className="flex flex-col">
+          {hideReceived && (
+            <div className="bg-amber-950/40 border-b border-amber-500/30 px-3 py-1 font-mono text-[10px] text-amber-300 flex items-center justify-between select-none">
+              <span>Telemetría RX (datos recibidos del puerto) oculta — Mostrando comandos y eventos</span>
+              <span className="font-bold text-amber-400">{logs.filter((l) => l.direction === 'in').length} ocultos</span>
+            </div>
+          )}
+
           <div
             ref={scrollRef}
             className="h-44 bg-neutral-950 p-3 font-mono text-xs overflow-y-auto flex flex-col gap-1 select-text"
           >
-            {logs.length === 0 ? (
+            {visibleLogs.length === 0 ? (
               <div className="text-neutral-600 italic py-2">
-                Sin datos aún. Conecta el ESP32 o ejecuta comandos para ver la telemetría en tiempo real.
+                {hideReceived
+                  ? 'No hay comandos ni eventos de sistema (los datos RX recibidos están ocultos).'
+                  : 'Sin datos aún. Conecta el ESP32 o ejecuta comandos para ver la telemetría en tiempo real.'}
               </div>
             ) : (
-              logs.map((log, i) => (
+              visibleLogs.map((log, i) => (
                 <div key={i} className="flex items-start gap-2 leading-tight">
                   <span className="text-neutral-600 text-[10px] shrink-0 select-none">
                     {log.time}
