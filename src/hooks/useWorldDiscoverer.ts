@@ -71,13 +71,18 @@ export function useWorldDiscoverer() {
   // Autonomous exploration state
   const [isAutonomous, setIsAutonomous] = useState(false);
 
-  // Rover & Sweep State (Sensor turns 180° in exactly 20 seconds)
+  // Rover & Sweep State (Sensor starts at 90°, probes ±15°, and triggers 180° sweep on obstacle <= 40cm)
   const [roverState, setRoverState] = useState<RoverSweepState>({
-    currentAngle: 90, // 90° is straight ahead relative to bot heading
+    currentAngle: 90, // Punto de inicio: 90° (0° relativo / Frente)
+    relativeAngle: 0,
     targetAngle: 90,
-    sweepDirection: 'forward', // 0 -> 180 -> 0
+    sweepDirection: 'forward', // inicia oscilación 0° -> +15° -> 0° -> -15°
     isScanning: true,
-    sweepPeriodSeconds: 20, // 20.0 seconds per 180°
+    scanMode: 'narrow_patrol', // Modo inicial: patrullaje estrecho (±15°)
+    isObstacleDetected: false,
+    obstacleDistanceCm: null,
+    obstacleThresholdCm: 40, // Umbral crítico de 40 cm
+    sweepPeriodSeconds: 20, // Barrido panorámico 180° en 20s
     elapsedInSweepSeconds: 0,
     totalSweepsCompleted: 0,
     currentDistanceCm: 120,
@@ -345,18 +350,17 @@ export function useWorldDiscoverer() {
       const currentDist = roverState.currentDistanceCm;
       const currentSensorAngle = roverState.currentAngle;
 
-      // Obstacle avoidance logic based on 180° sweep readings
-      const isObstacleAhead =
-        currentDist < 50 && currentSensorAngle >= 60 && currentSensorAngle <= 120;
+      // Obstacle avoidance logic based on 40cm trigger threshold
+      const isObstacleAhead = currentDist <= 40.0;
 
       if (isObstacleAhead) {
-        // Turn away from obstacle toward the side with more space
-        const turnDirection = currentSensorAngle > 90 ? -20 : 20; // turn right or left
-        moveBot(1.5, turnDirection, 10);
+        // When obstacle is detected within 40cm, steer away using panoramic survey
+        const turnDirection = currentSensorAngle >= 90 ? -18 : 18;
+        moveBot(0.5, turnDirection, 8);
       } else {
-        // Forward exploration cruise with smooth wander
-        const gentleTurn = (Math.random() - 0.5) * 4; // slight organic curve
-        moveBot(3.5, gentleTurn, 18);
+        // Forward exploration cruise with smooth organic wander
+        const gentleTurn = (Math.random() - 0.5) * 3;
+        moveBot(3.5, gentleTurn, 16);
       }
     }, 180);
 
@@ -591,20 +595,43 @@ export function useWorldDiscoverer() {
                 if (!line) continue;
                 addLog(line, 'in');
 
-                // Check for PING:angle,distance
+                // Check for PING:angle,distance or DIST:distance
                 if (line.startsWith('PING:')) {
                   const parts = line.substring(5).split(',');
                   if (parts.length >= 2) {
                     const angle = parseFloat(parts[0]);
                     const dist = parseFloat(parts[1]);
                     if (!isNaN(angle) && !isNaN(dist)) {
+                      const relAngle = Math.round(angle - 90);
+                      const isObstacle = dist <= 40.0;
+
                       setRoverState((prev) => ({
                         ...prev,
                         currentAngle: Math.round(angle),
+                        relativeAngle: relAngle,
                         currentDistanceCm: dist,
+                        isObstacleDetected: isObstacle,
+                        obstacleDistanceCm: isObstacle ? dist : prev.obstacleDistanceCm,
+                        scanMode: isObstacle ? 'obstacle_panoramic' : prev.scanMode,
                       }));
+
+                      if (isObstacle) {
+                        radarAudio.playObstacleAlert();
+                      }
                       recordPoint(angle, dist);
                     }
+                  }
+                } else if (line.startsWith('DIST:')) {
+                  const distVal = parseFloat(line.substring(5).trim());
+                  if (!isNaN(distVal)) {
+                    const isObstacle = distVal <= 40.0;
+                    setRoverState((prev) => ({
+                      ...prev,
+                      currentDistanceCm: distVal,
+                      isObstacleDetected: isObstacle,
+                      obstacleDistanceCm: isObstacle ? distVal : prev.obstacleDistanceCm,
+                      scanMode: isObstacle ? 'obstacle_panoramic' : prev.scanMode,
+                    }));
                   }
                 } else if (line.startsWith('POS:')) {
                   // Real odometry position from ESP32: POS:x,y,heading
@@ -764,61 +791,136 @@ export function useWorldDiscoverer() {
     addLog('Modo simulador 2D activado.', 'sys');
   }, [isConnected, handleDisconnectSerial, addLog]);
 
-  // Automated 180° Sweep Loop (every 20 seconds) in Simulation or Tracker
+  // Smart Sonar Sweep Loop (Starts at 90°, probes ±15°, triggers 180° panoramic sweep if obstacle <= 40cm)
   useEffect(() => {
     if (!roverState.isScanning) {
       if (sweepIntervalRef.current) clearInterval(sweepIntervalRef.current);
       return;
     }
 
-    // Sweep timing: 180 degrees in 20.0 seconds = 9°/s
-    // Interval 100ms advances 0.9° per step
-    const STEP_INTERVAL_MS = 100;
-    const DEGREES_PER_STEP = 180 / ((roverState.sweepPeriodSeconds * 1000) / STEP_INTERVAL_MS);
+    const STEP_INTERVAL_MS = 80;
 
     sweepIntervalRef.current = setInterval(() => {
       setRoverState((prev) => {
+        const CENTER_ANGLE = 90; // Punto de inicio fijado en 90° (0° relativo / Frente)
+        const NARROW_SPAN = 15; // Rango de sondeo estrecho: de 0 a +15° (105°) y de 0 a -15° (75°)
+        const PANORAMIC_MIN = 0; // -90° relativo
+        const PANORAMIC_MAX = 180; // +90° relativo
+        const THRESHOLD_CM = prev.obstacleThresholdCm; // 40 cm
+
         let newAngle = prev.currentAngle;
         let newDir = prev.sweepDirection;
+        let newMode = prev.scanMode;
         let newSweeps = prev.totalSweepsCompleted;
+        let isObstacle = prev.isObstacleDetected;
+        let obstacleDist = prev.obstacleDistanceCm;
 
-        if (newDir === 'forward') {
-          newAngle += DEGREES_PER_STEP;
-          if (newAngle >= 180) {
-            newAngle = 180;
-            newDir = 'backward';
-            newSweeps += 1;
-            radarAudio.playSweepCycleComplete();
-          }
-        } else {
-          newAngle -= DEGREES_PER_STEP;
-          if (newAngle <= 0) {
-            newAngle = 0;
-            newDir = 'forward';
-            newSweeps += 1;
-            radarAudio.playSweepCycleComplete();
-          }
-        }
-
-        const progressFrac =
-          newDir === 'forward' ? newAngle / 180 : (180 - newAngle) / 180;
-        const elapsedSec = Number((progressFrac * prev.sweepPeriodSeconds).toFixed(1));
-
-        // In simulator mode, raycast from current moving bot pose!
+        // Perform raycast ping to get distance at newAngle
         let newDist = prev.currentDistanceCm;
         if (connectionMode === 'simulator') {
           const sim = simulateSonarPing(botPoseRef.current, newAngle, preset, prev.maxRangeCm);
-          newDist = sim.distanceCm;
-          recordPoint(newAngle, sim.distanceCm, sim.type, {
+          newDist = Number(sim.distanceCm.toFixed(1));
+          recordPoint(newAngle, newDist, sim.type, {
             worldX: sim.worldX,
             worldY: sim.worldY,
           });
         }
 
+        // Trigger obstacle detection if distance <= 40cm
+        if (newDist <= THRESHOLD_CM) {
+          if (!isObstacle || newMode === 'narrow_patrol') {
+            isObstacle = true;
+            obstacleDist = newDist;
+            newMode = 'obstacle_panoramic';
+            addLog(
+              `¡ALERTA OBSTÁCULO! Objeto detectado a ${newDist.toFixed(1)} cm (<= 40 cm). Iniciando barrido panorámico 180° (-90° a +90° desde centro 90°)...`,
+              'sys'
+            );
+            radarAudio.playObstacleAlert();
+          } else {
+            obstacleDist = Math.min(obstacleDist || newDist, newDist);
+          }
+        }
+
+        if (newMode === 'narrow_patrol') {
+          // Narrow patrol mode: oscillates between 75° (-15°) and 105° (+15°)
+          const minAngle = CENTER_ANGLE - NARROW_SPAN; // 75°
+          const maxAngle = CENTER_ANGLE + NARROW_SPAN; // 105°
+          const stepDeg = 1.2;
+
+          if (newDir === 'forward') {
+            newAngle += stepDeg;
+            if (newAngle >= maxAngle) {
+              newAngle = maxAngle;
+              newDir = 'backward';
+            }
+          } else {
+            newAngle -= stepDeg;
+            if (newAngle <= minAngle) {
+              newAngle = minAngle;
+              newDir = 'forward';
+            }
+          }
+        } else {
+          // Panoramic mode: sweeps 0° to 180° (-90° to +90° relative to center 90°)
+          const DEGREES_PER_STEP = 180 / ((prev.sweepPeriodSeconds * 1000) / STEP_INTERVAL_MS);
+
+          if (newDir === 'forward') {
+            newAngle += DEGREES_PER_STEP;
+            if (newAngle >= PANORAMIC_MAX) {
+              newAngle = PANORAMIC_MAX;
+              newDir = 'backward';
+              newSweeps += 1;
+              radarAudio.playSweepCycleComplete();
+
+              // If obstacle has cleared (> 40cm), return to narrow patrol starting at 90°
+              if (newDist > THRESHOLD_CM) {
+                isObstacle = false;
+                obstacleDist = null;
+                newMode = 'narrow_patrol';
+                addLog(
+                  `Camino despejado (${newDist.toFixed(1)} cm > 40 cm). Retornando a sondeo frontal estrecho (±15°)...`,
+                  'sys'
+                );
+              }
+            }
+          } else {
+            newAngle -= DEGREES_PER_STEP;
+            if (newAngle <= PANORAMIC_MIN) {
+              newAngle = PANORAMIC_MIN;
+              newDir = 'forward';
+              newSweeps += 1;
+              radarAudio.playSweepCycleComplete();
+
+              // If obstacle has cleared (> 40cm), return to narrow patrol starting at 90°
+              if (newDist > THRESHOLD_CM) {
+                isObstacle = false;
+                obstacleDist = null;
+                newMode = 'narrow_patrol';
+                addLog(
+                  `Camino despejado (${newDist.toFixed(1)} cm > 40 cm). Retornando a sondeo frontal estrecho (±15°)...`,
+                  'sys'
+                );
+              }
+            }
+          }
+        }
+
+        const relativeAngle = Math.round(newAngle - CENTER_ANGLE);
+        const progressFrac =
+          newMode === 'narrow_patrol'
+            ? Math.abs(newAngle - (CENTER_ANGLE - NARROW_SPAN)) / (NARROW_SPAN * 2)
+            : newAngle / 180;
+        const elapsedSec = Number((progressFrac * prev.sweepPeriodSeconds).toFixed(1));
+
         return {
           ...prev,
           currentAngle: Number(newAngle.toFixed(1)),
+          relativeAngle,
           sweepDirection: newDir,
+          scanMode: newMode,
+          isObstacleDetected: isObstacle,
+          obstacleDistanceCm: obstacleDist,
           totalSweepsCompleted: newSweeps,
           elapsedInSweepSeconds: elapsedSec,
           currentDistanceCm: newDist,
@@ -835,6 +937,7 @@ export function useWorldDiscoverer() {
     connectionMode,
     preset,
     recordPoint,
+    addLog,
   ]);
 
   // Exploration Statistics & Route Stats

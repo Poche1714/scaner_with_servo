@@ -258,6 +258,61 @@ export const WorldCanvas2D: React.FC<WorldCanvas2DProps> = ({
       ctx.stroke();
     }
 
+    // 1.5. Dynamic Fog of War Layer (Clearing along the bot's trajectory and vision cone)
+    ctx.save();
+    const fogCanvas = document.createElement('canvas');
+    fogCanvas.width = w;
+    fogCanvas.height = h;
+    const fCtx = fogCanvas.getContext('2d');
+    if (fCtx) {
+      // Fill canvas with deep shroud of dark fog
+      fCtx.fillStyle = 'rgba(7, 10, 16, 0.88)';
+      fCtx.fillRect(0, 0, w, h);
+
+      // Cut out revealed areas where the bot has traveled
+      fCtx.globalCompositeOperation = 'destination-out';
+
+      // Clear along trajectory
+      trajectory.forEach((t) => {
+        const ts = worldToScreen(t.x, t.y);
+        const radius = 34 * camera.zoom;
+        const grad = fCtx.createRadialGradient(ts.sx, ts.sy, radius * 0.3, ts.sx, ts.sy, radius);
+        grad.addColorStop(0, 'rgba(0, 0, 0, 1.0)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+        fCtx.fillStyle = grad;
+        fCtx.beginPath();
+        fCtx.arc(ts.sx, ts.sy, radius, 0, Math.PI * 2);
+        fCtx.fill();
+      });
+
+      // Clear around current bot pose
+      const bs = worldToScreen(botPose.x, botPose.y);
+      const botRadius = 48 * camera.zoom;
+      const bGrad = fCtx.createRadialGradient(bs.sx, bs.sy, botRadius * 0.2, bs.sx, bs.sy, botRadius);
+      bGrad.addColorStop(0, 'rgba(0, 0, 0, 1.0)');
+      bGrad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+      fCtx.fillStyle = bGrad;
+      fCtx.beginPath();
+      fCtx.arc(bs.sx, bs.sy, botRadius, 0, Math.PI * 2);
+      fCtx.fill();
+
+      // Clear along the live ultrasonic beam fan
+      const offsetAngle = currentAngle - 90;
+      const beamAngleRad = -((botPose.heading + offsetAngle - 90) * Math.PI) / 180;
+      const beamReachPx = Math.min(currentDistanceCm, maxRangeCm) * basePpc;
+
+      fCtx.beginPath();
+      fCtx.moveTo(bs.sx, bs.sy);
+      fCtx.arc(bs.sx, bs.sy, beamReachPx + 15, beamAngleRad - 0.25, beamAngleRad + 0.25);
+      fCtx.closePath();
+      fCtx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+      fCtx.fill();
+
+      // Render the fog of war overlay onto the main canvas
+      ctx.drawImage(fogCanvas, 0, 0);
+    }
+    ctx.restore();
+
     // 2. Draw Discovered World Obstacles (Point Cloud & Wall Segments)
     // Connect points that are close (< 22cm) to visually sketch room boundaries
     ctx.lineWidth = 1.5;
@@ -728,6 +783,16 @@ export const WorldCanvas2D: React.FC<WorldCanvas2DProps> = ({
           <span className="text-neutral-600">·</span>
           <span className="text-neutral-400">
             {waypoints.length} hitos
+          </span>
+          <span className="text-neutral-600">·</span>
+          <span
+            className={`font-semibold ${
+              currentDistanceCm <= 40
+                ? 'text-rose-400 animate-pulse'
+                : 'text-cyan-300'
+            }`}
+          >
+            Distancia: {currentDistanceCm.toFixed(1)} cm {currentDistanceCm <= 40 ? '(180°)' : '(±15°)'}
           </span>
         </div>
 

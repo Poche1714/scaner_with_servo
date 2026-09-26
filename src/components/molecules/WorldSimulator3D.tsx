@@ -9,9 +9,7 @@ import {
   MapEnvironmentPreset,
 } from '../../types/worldDiscoverer';
 import { createRover3DModel, updateRover3D, Rover3DInstance } from '../../utils/rover3DModel';
-import { WORLD_PRESETS } from '../../utils/worldSimulator';
 import {
-  Eye,
   Crosshair,
   Compass,
   Layers,
@@ -19,20 +17,20 @@ import {
   Maximize2,
   Minimize2,
   Camera,
-  Play,
-  Pause,
   MapPin,
   RotateCcw,
   Footprints,
   Radio,
   Sun,
   Grid,
-  Activity,
+  CloudFog,
+  Boxes,
   ArrowUp,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   Square,
+  ShieldAlert,
 } from 'lucide-react';
 
 export type CameraViewMode = 'orbit' | 'chase' | 'fpv' | 'top_down';
@@ -79,9 +77,16 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
   const [cameraMode, setCameraMode] = useState<CameraViewMode>('orbit');
   const [showGrid, setShowGrid] = useState(true);
   const [showBeam, setShowBeam] = useState(true);
+  const [showFogOfWar, setShowFogOfWar] = useState(true);
   const [showPointcloud, setShowPointcloud] = useState(true);
   const [showShadows, setShowShadows] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [clearedPercent, setClearedPercent] = useState<number>(0);
+
+  // Fog of War offscreen canvas ref
+  const fogCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fogTextureRef = useRef<THREE.CanvasTexture | null>(null);
+  const lastDrawnTrajIdxRef = useRef<number>(0);
 
   // References for Three.js engine
   const threeRef = useRef<{
@@ -92,11 +97,12 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     trajectoryLine: THREE.Line;
     trajectoryPositions: Float32Array;
     waypointsGroup: THREE.Group;
-    obstaclesGroup: THREE.Group;
+    discoveredWallsGroup: THREE.Group;
     pointcloudPoints: THREE.Points;
     pointcloudGeo: THREE.BufferGeometry;
     gridHelper: THREE.GridHelper;
     groundMesh: THREE.Mesh;
+    fogShroudMesh: THREE.Mesh;
     dirLight: THREE.DirectionalLight;
     controls: {
       isDragging: boolean;
@@ -154,8 +160,8 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
 
     // 2. Scene with Gazebo simulation atmosphere
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x181c22); // Gazebo slate dark grey sky
-    scene.fog = new THREE.FogExp2(0x181c22, 0.035);
+    scene.background = new THREE.Color(0x0f1319);
+    scene.fog = new THREE.FogExp2(0x0f1319, 0.028);
 
     // 3. Camera
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.05, 500);
@@ -164,13 +170,13 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     // Orbit Camera State
     const controls = {
       isDragging: false,
-      dragButton: 0, // 0 = left (rotate), 2 = right (pan)
+      dragButton: 0,
       prevMouse: { x: 0, y: 0 },
       spherical: { radius: 4.5, theta: Math.PI / 4, phi: Math.PI / 3.2 },
       target: new THREE.Vector3(0, 0.2, 0),
     };
 
-    // 4. Lighting (Simulating Sun & Studio Lighting in Gazebo)
+    // 4. Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     scene.add(ambientLight);
 
@@ -181,14 +187,13 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 0.5;
     dirLight.shadow.camera.far = 40;
-    dirLight.shadow.camera.left = -10;
-    dirLight.shadow.camera.right = 10;
-    dirLight.shadow.camera.top = 10;
-    dirLight.shadow.camera.bottom = -10;
+    dirLight.shadow.camera.left = -15;
+    dirLight.shadow.camera.right = 15;
+    dirLight.shadow.camera.top = 15;
+    dirLight.shadow.camera.bottom = -15;
     dirLight.shadow.bias = -0.0005;
     scene.add(dirLight);
 
-    // Subtle blue fill light from opposite angle
     const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.35);
     fillLight.position.set(-6, 4, -8);
     scene.add(fillLight);
@@ -196,7 +201,7 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     // 5. Gazebo Ground Plane with Texture Grid
     const groundGeo = new THREE.PlaneGeometry(60, 60);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x22272e, // Gazebo concrete asphalt ground
+      color: 0x1b2028,
       roughness: 0.85,
       metalness: 0.1,
     });
@@ -205,9 +210,9 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
-    // High contrast 1m and 0.2m Gazebo Grid
-    const gridHelper = new THREE.GridHelper(60, 60, 0x06b6d4, 0x334155);
-    gridHelper.position.y = 0.002; // Slightly above ground
+    // High contrast Gazebo Grid
+    const gridHelper = new THREE.GridHelper(60, 60, 0x06b6d4, 0x273549);
+    gridHelper.position.y = 0.002;
     scene.add(gridHelper);
 
     // 6. Base / Start Station Landing Pad
@@ -227,7 +232,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     );
     baseInnerMesh.rotation.x = -Math.PI / 2;
     baseGroup.add(baseInnerMesh);
-
     scene.add(baseGroup);
 
     // 7. 3D Rover Instance
@@ -242,7 +246,7 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     trajectoryGeo.setDrawRange(0, 0);
 
     const trajectoryMat = new THREE.LineBasicMaterial({
-      color: 0x06b6d4, // Cyan glowing route line
+      color: 0x06b6d4,
       linewidth: 3,
     });
     const trajectoryLine = new THREE.Line(trajectoryGeo, trajectoryMat);
@@ -252,11 +256,13 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     const waypointsGroup = new THREE.Group();
     scene.add(waypointsGroup);
 
-    // 10. Obstacles Group (3D Crate cubes, pillars, and walls matching Gazebo reference)
-    const obstaclesGroup = new THREE.Group();
-    scene.add(obstaclesGroup);
+    // 10. Dynamic Discovered Walls Group (NO PRE-BAKED 3D OBJECTS)
+    // Only walls discovered by the bot's sonar sensor are created here!
+    const discoveredWallsGroup = new THREE.Group();
+    discoveredWallsGroup.name = 'DiscoveredWallsGroup';
+    scene.add(discoveredWallsGroup);
 
-    // 11. Sonar Pointcloud in 3D (Detected Obstacle Hits)
+    // 11. Sonar Pointcloud in 3D
     const MAX_PCD_POINTS = 2000;
     const pcdPositions = new Float32Array(MAX_PCD_POINTS * 3);
     const pcdColors = new Float32Array(MAX_PCD_POINTS * 3);
@@ -274,6 +280,34 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     const pointcloudPoints = new THREE.Points(pointcloudGeo, pointcloudMat);
     scene.add(pointcloudPoints);
 
+    // 12. Dynamic Fog of War Shroud Mesh & Canvas
+    // Offscreen 512x512 canvas: initially opaque black shroud
+    const fogCanvas = document.createElement('canvas');
+    fogCanvas.width = 512;
+    fogCanvas.height = 512;
+    const fogCtx = fogCanvas.getContext('2d')!;
+    fogCtx.fillStyle = '#0a0e16';
+    fogCtx.fillRect(0, 0, 512, 512);
+
+    const fogTexture = new THREE.CanvasTexture(fogCanvas);
+    fogTexture.minFilter = THREE.LinearFilter;
+    fogTexture.magFilter = THREE.LinearFilter;
+
+    const fogShroudGeo = new THREE.PlaneGeometry(60, 60);
+    const fogShroudMat = new THREE.MeshBasicMaterial({
+      map: fogTexture,
+      transparent: true,
+      opacity: 0.94,
+      depthWrite: false,
+    });
+    const fogShroudMesh = new THREE.Mesh(fogShroudGeo, fogShroudMat);
+    fogShroudMesh.rotation.x = -Math.PI / 2;
+    fogShroudMesh.position.y = 0.025; // Floating above the ground grid
+    scene.add(fogShroudMesh);
+
+    fogCanvasRef.current = fogCanvas;
+    fogTextureRef.current = fogTexture;
+
     // Store references
     threeRef.current = {
       renderer,
@@ -283,19 +317,20 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
       trajectoryLine,
       trajectoryPositions,
       waypointsGroup,
-      obstaclesGroup,
+      discoveredWallsGroup,
       pointcloudPoints,
       pointcloudGeo,
       gridHelper,
       groundMesh,
+      fogShroudMesh,
       dirLight,
       controls,
       animFrameId: 0,
       lastTime: performance.now(),
     };
 
-    // Build the 3D obstacles for the active preset
-    rebuildPresetObstacles(obstaclesGroup, preset);
+    // Initial clear of fog at starting position
+    clearFogAtWorldPos(fogCanvas, fogCtx, fogTexture, botPose.x, botPose.y, 4.0);
 
     // Animation Loop
     const animate = (time: number) => {
@@ -324,18 +359,39 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
       );
 
       // Pulse wave in sonar beam
-      const pulseZ = ((time * 0.002) % 1) * - (Math.min(currentRoverState.currentDistanceCm, currentRoverState.maxRangeCm) / 100);
+      const pulseZ =
+        ((time * 0.002) % 1) *
+        -(Math.min(currentRoverState.currentDistanceCm, currentRoverState.maxRangeCm) / 100);
       state.roverInstance.beamPulse.position.z = pulseZ;
+
+      // Continuously clear Fog of War around bot and in current sonar beam
+      if (fogCanvasRef.current && fogTextureRef.current) {
+        const fCanvas = fogCanvasRef.current;
+        const fCtx = fCanvas.getContext('2d');
+        if (fCtx) {
+          clearFogAtWorldPos(fCanvas, fCtx, fogTextureRef.current, currentBot.x, currentBot.y, 3.2);
+
+          // Clear vision fan along sonar sensor direction
+          clearFogVisionFan(
+            fCanvas,
+            fCtx,
+            fogTextureRef.current,
+            currentBot.x,
+            currentBot.y,
+            currentBot.heading,
+            currentRoverState.currentAngle,
+            currentRoverState.currentDistanceCm
+          );
+        }
+      }
 
       // Update Camera based on active mode
       const roverPos = state.roverInstance.rootGroup.position;
       const roverHeadingRad = ((currentBot.heading - 90) * Math.PI) / 180;
 
       if (currentCamMode === 'chase') {
-        // Chase Cam: smooth follow from behind the rover
         const chaseDist = 2.4;
         const chaseHeight = 1.35;
-        // Direction behind robot is +Z in robot local frame
         const forwardX = Math.cos(-roverHeadingRad - Math.PI / 2);
         const forwardZ = Math.sin(-roverHeadingRad - Math.PI / 2);
 
@@ -346,11 +402,14 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
         state.camera.position.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), 0.15);
         state.camera.lookAt(roverPos.x, roverPos.y + 0.3, roverPos.z);
       } else if (currentCamMode === 'fpv') {
-        // FPV: Onboard camera right above ultrasonic sensor
         const forwardX = Math.cos(-roverHeadingRad - Math.PI / 2);
         const forwardZ = Math.sin(-roverHeadingRad - Math.PI / 2);
 
-        state.camera.position.set(roverPos.x + forwardX * 0.08, roverPos.y + 0.28, roverPos.z + forwardZ * 0.08);
+        state.camera.position.set(
+          roverPos.x + forwardX * 0.08,
+          roverPos.y + 0.28,
+          roverPos.z + forwardZ * 0.08
+        );
         const lookTarget = new THREE.Vector3(
           roverPos.x + forwardX * 3.5,
           roverPos.y + 0.22,
@@ -358,15 +417,12 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
         );
         state.camera.lookAt(lookTarget);
       } else if (currentCamMode === 'top_down') {
-        // Top-Down Ortho-like perspective looking straight down
         state.camera.position.set(roverPos.x, 8.5, roverPos.z + 0.01);
         state.camera.lookAt(roverPos.x, 0, roverPos.z);
       } else {
-        // Orbit Camera mode: smooth tracking of orbit target
         const sph = state.controls.spherical;
         const target = state.controls.target;
 
-        // Smoothly bring target near rover if user is driving
         if (currentBot.isMoving) {
           target.lerp(new THREE.Vector3(roverPos.x, 0.2, roverPos.z), 0.08);
         }
@@ -408,11 +464,49 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     };
   }, []);
 
-  // Update Obstacles whenever preset changes
+  // Whenever points change: DYNAMICALLY CREATE 3D WALLS AT EACH DETECTED OBSTACLE POINT!
   useEffect(() => {
-    if (!threeRef.current) return;
-    rebuildPresetObstacles(threeRef.current.obstaclesGroup, preset);
-  }, [preset]);
+    const state = threeRef.current;
+    if (!state) return;
+
+    rebuildDiscoveredWalls(state.discoveredWallsGroup, points);
+  }, [points]);
+
+  // Whenever trajectory points are added: Clear Fog of War along the bot's travel path
+  useEffect(() => {
+    const state = threeRef.current;
+    if (!state || !fogCanvasRef.current || !fogTextureRef.current) return;
+
+    const fCanvas = fogCanvasRef.current;
+    const fCtx = fCanvas.getContext('2d');
+    if (!fCtx) return;
+
+    const startIdx = Math.max(0, lastDrawnTrajIdxRef.current);
+    for (let i = startIdx; i < trajectory.length; i++) {
+      const p = trajectory[i];
+      clearFogAtWorldPos(fCanvas, fCtx, fogTextureRef.current, p.x, p.y, 2.8);
+    }
+    lastDrawnTrajIdxRef.current = trajectory.length;
+
+    // Estimate cleared percentage
+    setClearedPercent(Math.min(100, Math.round(trajectory.length * 0.45 + points.length * 0.35)));
+  }, [trajectory, points.length]);
+
+  // Reset Fog when route is reset
+  useEffect(() => {
+    if (trajectory.length <= 1 && fogCanvasRef.current && fogTextureRef.current) {
+      const fCanvas = fogCanvasRef.current;
+      const fCtx = fCanvas.getContext('2d');
+      if (fCtx) {
+        fCtx.globalCompositeOperation = 'source-over';
+        fCtx.fillStyle = '#0a0e16';
+        fCtx.fillRect(0, 0, 512, 512);
+        clearFogAtWorldPos(fCanvas, fCtx, fogTextureRef.current, botPose.x, botPose.y, 4.0);
+        lastDrawnTrajIdxRef.current = 0;
+        setClearedPercent(2);
+      }
+    }
+  }, [trajectory.length, botPose.x, botPose.y]);
 
   // Update Trajectory Buffer in 3D
   useEffect(() => {
@@ -424,9 +518,8 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
 
     for (let i = 0; i < count; i++) {
       const p = trajectory[i];
-      // Convert cm to meters: x cm -> X m, y cm -> -Z m
       positions[i * 3 + 0] = p.x / 100;
-      positions[i * 3 + 1] = 0.035; // slightly above ground to prevent z-fighting
+      positions[i * 3 + 1] = 0.035;
       positions[i * 3 + 2] = -p.y / 100;
     }
 
@@ -440,7 +533,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     if (!state) return;
 
     const group = state.waypointsGroup;
-    // Clear old waypoints
     while (group.children.length > 0) {
       const child = group.children[0];
       group.remove(child);
@@ -450,7 +542,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
       const wpGroup = new THREE.Group();
       wpGroup.position.set(wp.x / 100, 0, -wp.y / 100);
 
-      // Vertical holographic light beacon pole
       const poleGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.8, 8);
       const poleMat = new THREE.MeshBasicMaterial({
         color: index === 0 ? 0x10b981 : 0x06b6d4,
@@ -461,7 +552,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
       pole.position.y = 0.4;
       wpGroup.add(pole);
 
-      // Glowing floating beacon sphere
       const sphereGeo = new THREE.SphereGeometry(0.06, 12, 12);
       const sphereMat = new THREE.MeshStandardMaterial({
         color: index === 0 ? 0x10b981 : 0x06b6d4,
@@ -472,7 +562,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
       sphere.position.y = 0.8;
       wpGroup.add(sphere);
 
-      // Base footprint ring
       const ringGeo = new THREE.RingGeometry(0.12, 0.16, 20);
       const ringMat = new THREE.MeshBasicMaterial({
         color: index === 0 ? 0x10b981 : 0x06b6d4,
@@ -502,22 +591,20 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
 
     for (let i = 0; i < count; i++) {
       const p = points[i];
-      // World coordinates in meters
       positions[i * 3 + 0] = p.worldX / 100;
-      positions[i * 3 + 1] = 0.18; // Sensor height
+      positions[i * 3 + 1] = 0.18;
       positions[i * 3 + 2] = -p.worldY / 100;
 
-      // Color based on type / distance
       if (p.type === 'anomaly') {
-        colors[i * 3 + 0] = 0.93; // Purple / Pink
+        colors[i * 3 + 0] = 0.93;
         colors[i * 3 + 1] = 0.28;
         colors[i * 3 + 2] = 0.60;
-      } else if (p.distanceCm < 60) {
-        colors[i * 3 + 0] = 0.96; // Rose / Red
+      } else if (p.distanceCm <= 40) {
+        colors[i * 3 + 0] = 0.96;
         colors[i * 3 + 1] = 0.25;
         colors[i * 3 + 2] = 0.37;
       } else {
-        colors[i * 3 + 0] = 0.02; // Cyan / Emerald
+        colors[i * 3 + 0] = 0.02;
         colors[i * 3 + 1] = 0.71;
         colors[i * 3 + 2] = 0.83;
       }
@@ -534,10 +621,11 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     threeRef.current.gridHelper.visible = showGrid;
     threeRef.current.roverInstance.beamGroup.visible = showBeam;
     threeRef.current.pointcloudPoints.visible = showPointcloud;
+    threeRef.current.fogShroudMesh.visible = showFogOfWar;
     threeRef.current.dirLight.castShadow = showShadows;
-  }, [showGrid, showBeam, showPointcloud, showShadows]);
+  }, [showGrid, showBeam, showPointcloud, showFogOfWar, showShadows]);
 
-  // Mouse / Touch Event Handlers for Gazebo Orbit Camera
+  // Mouse / Touch Event Handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (cameraModeRef.current !== 'orbit') return;
     const state = threeRef.current;
@@ -557,14 +645,12 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     state.controls.prevMouse = { x: e.clientX, y: e.clientY };
 
     if (state.controls.dragButton === 0) {
-      // Left click: Orbit Rotation
       state.controls.spherical.theta -= dx * 0.007;
       state.controls.spherical.phi = Math.max(
         0.1,
         Math.min(Math.PI / 2 - 0.05, state.controls.spherical.phi - dy * 0.007)
       );
     } else if (state.controls.dragButton === 2) {
-      // Right click: Pan
       const panSpeed = 0.004 * (state.controls.spherical.radius / 5);
       const theta = state.controls.spherical.theta;
       state.controls.target.x -= (dx * Math.cos(theta) - dy * Math.sin(theta)) * panSpeed;
@@ -590,12 +676,10 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     );
   }, []);
 
-  // Context menu prevention for right-click drag pan
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
   }, []);
 
-  // Focus camera back on the bot
   const handleFocusBot = useCallback(() => {
     if (!threeRef.current) return;
     const pos = threeRef.current.roverInstance.rootGroup.position;
@@ -604,12 +688,11 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
     threeRef.current.controls.spherical.phi = Math.PI / 3.4;
   }, []);
 
-  // Take Snapshot of 3D Simulation
   const handleTakeSnapshot = useCallback(() => {
     if (!canvasRef.current) return;
     const dataUrl = canvasRef.current.toDataURL('image/png');
     const link = document.createElement('a');
-    link.download = `gazebo-rover-sim-${Date.now()}.png`;
+    link.download = `slam-3d-walls-${Date.now()}.png`;
     link.href = dataUrl;
     link.click();
   }, []);
@@ -629,39 +712,63 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
       {/* 3D WebGL Canvas */}
       <canvas ref={canvasRef} className="w-full h-full block cursor-grab active:cursor-grabbing" />
 
-      {/* Top Left: Gazebo ROS Simulation Badge & Preset Info */}
+      {/* Top Left: Procedural SLAM Wall Mapping & Fog Status Badge */}
       <div className="absolute top-3 left-3 flex flex-col gap-1.5 pointer-events-none z-10">
         <div className="flex items-center gap-2 bg-neutral-900/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-neutral-700/80 shadow-lg pointer-events-auto">
-          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
+          <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
           <span className="text-xs font-bold tracking-wide text-neutral-100 flex items-center gap-1.5 font-mono">
-            <span>GAZEBO 3D SIMULATOR</span>
-            <span className="text-amber-400 text-[10px] bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30">
-              ROVER 4x4
+            <span>SLAM 3D PROCEDURAL</span>
+            <span className="text-cyan-300 text-[10px] bg-cyan-500/20 px-1.5 py-0.5 rounded border border-cyan-500/30">
+              PAREDES DESCUBIERTAS: {points.length}
             </span>
           </span>
           <span className="text-neutral-500 text-xs">|</span>
-          <span className="text-[11px] text-neutral-300 font-medium">
-            {WORLD_PRESETS[preset]?.name || 'Escenario 3D'}
+          <span className="text-[11px] text-emerald-400 font-mono font-medium flex items-center gap-1">
+            <CloudFog className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Niebla Despejada: {clearedPercent}%</span>
           </span>
         </div>
 
-        {/* Real-time Telemetry Overlay */}
+        {/* Real-time Distance & Telemetry Overlay */}
         <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-neutral-300">
-          <div className="bg-neutral-900/85 backdrop-blur-md px-2.5 py-1 rounded-md border border-neutral-800 flex items-center gap-1.5">
-            <Radio className="w-3.5 h-3.5 text-cyan-400" />
-            <span>SONAR:</span>
+          <div
+            className={`px-2.5 py-1 rounded-md border flex items-center gap-1.5 transition-all ${
+              roverState.currentDistanceCm <= roverState.obstacleThresholdCm
+                ? 'bg-rose-950/90 border-rose-500/60 shadow-lg shadow-rose-950/40 text-rose-200 animate-pulse'
+                : 'bg-neutral-900/85 backdrop-blur-md border-neutral-800 text-neutral-300'
+            }`}
+          >
+            <Radio
+              className={`w-3.5 h-3.5 ${
+                roverState.currentDistanceCm <= roverState.obstacleThresholdCm
+                  ? 'text-rose-400'
+                  : 'text-cyan-400'
+              }`}
+            />
+            <span>DISTANCIA:</span>
             <span
-              className={`font-bold ${
-                roverState.currentDistanceCm < 50
+              className={`font-bold text-xs ${
+                roverState.currentDistanceCm <= roverState.obstacleThresholdCm
                   ? 'text-rose-400'
                   : roverState.currentDistanceCm < 100
                   ? 'text-amber-400'
                   : 'text-emerald-400'
               }`}
             >
-              {Math.round(roverState.currentDistanceCm)} cm
+              {roverState.currentDistanceCm.toFixed(1)} cm
             </span>
-            <span className="text-neutral-500">(@ {Math.round(roverState.currentAngle)}°)</span>
+            <span className="text-[10px] text-neutral-400 font-normal">
+              ({roverState.relativeAngle > 0 ? `+${roverState.relativeAngle}°` : `${roverState.relativeAngle}°`})
+            </span>
+            <span
+              className={`text-[9px] px-1 py-0.2 rounded font-sans uppercase font-bold ${
+                roverState.currentDistanceCm <= roverState.obstacleThresholdCm
+                  ? 'bg-rose-500/30 text-rose-300 border border-rose-500/40'
+                  : 'bg-emerald-500/20 text-emerald-300'
+              }`}
+            >
+              {roverState.scanMode === 'narrow_patrol' ? '±15°' : '180°'}
+            </span>
           </div>
 
           <div className="bg-neutral-900/85 backdrop-blur-md px-2.5 py-1 rounded-md border border-neutral-800 flex items-center gap-1.5">
@@ -684,7 +791,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
 
       {/* Top Right: Camera Mode Switcher & Viewport Actions */}
       <div className="absolute top-3 right-3 flex items-center gap-1.5 z-10">
-        {/* Camera Selector */}
         <div className="bg-neutral-900/90 backdrop-blur-md p-1 rounded-lg border border-neutral-800 flex items-center gap-1 shadow-lg">
           <button
             onClick={() => setCameraMode('orbit')}
@@ -693,7 +799,7 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
                 ? 'bg-amber-500 text-black font-semibold'
                 : 'text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800'
             }`}
-            title="Cámara Orbital Libre (Arrastrar para girar, clic derecho para paneo)"
+            title="Cámara Orbital Libre"
           >
             Orbital
           </button>
@@ -704,7 +810,7 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
                 ? 'bg-amber-500 text-black font-semibold'
                 : 'text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800'
             }`}
-            title="Cámara Persecución (Sigue al robot desde atrás)"
+            title="Cámara Persecución"
           >
             Seguir Bot
           </button>
@@ -715,7 +821,7 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
                 ? 'bg-amber-500 text-black font-semibold'
                 : 'text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800'
             }`}
-            title="Cámara a Bordo (Primera Persona / FPV sobre el sensor)"
+            title="Cámara a Bordo (FPV)"
           >
             FPV
           </button>
@@ -726,31 +832,28 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
                 ? 'bg-amber-500 text-black font-semibold'
                 : 'text-neutral-300 hover:text-neutral-100 hover:bg-neutral-800'
             }`}
-            title="Vista Cenital Superior (Plano táctico 3D)"
+            title="Vista Cenital"
           >
             Cenital
           </button>
         </div>
 
-        {/* Focus Bot Button */}
         <button
           onClick={handleFocusBot}
           className="p-2 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-neutral-100 rounded-lg border border-neutral-800 backdrop-blur-md shadow-lg transition-colors cursor-pointer"
-          title="Centrar Cámara en el Robot"
+          title="Centrar en el Robot"
         >
           <Crosshair className="w-4 h-4 text-cyan-400" />
         </button>
 
-        {/* Snapshot / Camera capture */}
         <button
           onClick={handleTakeSnapshot}
           className="p-2 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-neutral-100 rounded-lg border border-neutral-800 backdrop-blur-md shadow-lg transition-colors cursor-pointer"
-          title="Capturar Imagen 3D"
+          title="Capturar Foto 3D"
         >
           <Camera className="w-4 h-4 text-emerald-400" />
         </button>
 
-        {/* Fullscreen Toggle */}
         <button
           onClick={() => setIsFullscreen(!isFullscreen)}
           className="p-2 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-300 hover:text-neutral-100 rounded-lg border border-neutral-800 backdrop-blur-md shadow-lg transition-colors cursor-pointer"
@@ -760,15 +863,28 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
         </button>
       </div>
 
-      {/* Bottom Left: Visual Layer Toggles (Grid, Beam, PCD, Shadows) */}
+      {/* Bottom Left: Layer Toggles (Niebla de Guerra, Paredes 3D, Cuadrícula, Haz) */}
       <div className="absolute bottom-3 left-3 flex items-center gap-1.5 z-10">
         <div className="bg-neutral-900/85 backdrop-blur-md p-1 rounded-lg border border-neutral-800 flex items-center gap-1 shadow-lg text-[11px]">
+          <button
+            onClick={() => setShowFogOfWar(!showFogOfWar)}
+            className={`px-2 py-1 rounded flex items-center gap-1 transition-colors cursor-pointer ${
+              showFogOfWar
+                ? 'bg-neutral-800 text-cyan-300 font-medium'
+                : 'text-neutral-500 hover:text-neutral-300'
+            }`}
+            title="Alternar Niebla de Guerra Dinámica"
+          >
+            <CloudFog className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Niebla de Guerra</span>
+          </button>
+
           <button
             onClick={() => setShowGrid(!showGrid)}
             className={`px-2 py-1 rounded flex items-center gap-1 transition-colors cursor-pointer ${
               showGrid ? 'bg-neutral-800 text-cyan-300 font-medium' : 'text-neutral-500 hover:text-neutral-300'
             }`}
-            title="Alternar Cuadrícula Gazebo 3D"
+            title="Alternar Cuadrícula 3D"
           >
             <Grid className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Cuadrícula</span>
@@ -779,21 +895,10 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
             className={`px-2 py-1 rounded flex items-center gap-1 transition-colors cursor-pointer ${
               showBeam ? 'bg-neutral-800 text-cyan-300 font-medium' : 'text-neutral-500 hover:text-neutral-300'
             }`}
-            title="Alternar Haz Ultrasónico 3D"
+            title="Alternar Haz Ultrasónico"
           >
             <Radio className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Haz Sonar</span>
-          </button>
-
-          <button
-            onClick={() => setShowPointcloud(!showPointcloud)}
-            className={`px-2 py-1 rounded flex items-center gap-1 transition-colors cursor-pointer ${
-              showPointcloud ? 'bg-neutral-800 text-purple-300 font-medium' : 'text-neutral-500 hover:text-neutral-300'
-            }`}
-            title="Alternar Nube de Puntos de Obstáculos 3D"
-          >
-            <Layers className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Obstáculos 3D</span>
           </button>
 
           <button
@@ -809,11 +914,9 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
         </div>
       </div>
 
-      {/* Bottom Right: Quick Drive D-Pad & Waypoint Floating Controls */}
+      {/* Bottom Right: Quick Drive D-Pad */}
       <div className="absolute bottom-3 right-3 flex flex-col items-end gap-2 z-10">
-        {/* On-screen Drive D-Pad overlay for quick tactile driving */}
         <div className="bg-neutral-900/90 backdrop-blur-md p-2 rounded-xl border border-neutral-800 shadow-xl flex flex-col items-center gap-1">
-          {/* Forward */}
           <button
             onClick={onDriveForward}
             disabled={isAutonomous}
@@ -823,7 +926,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
             <ArrowUp className="w-4 h-4" />
           </button>
 
-          {/* Left - Stop - Right */}
           <div className="flex items-center gap-1">
             <button
               onClick={onTurnLeft}
@@ -852,7 +954,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
             </button>
           </div>
 
-          {/* Backward */}
           <button
             onClick={onDriveBackward}
             disabled={isAutonomous}
@@ -863,7 +964,6 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
           </button>
         </div>
 
-        {/* Quick Route Buttons */}
         <div className="flex items-center gap-1 bg-neutral-900/90 backdrop-blur-md p-1 rounded-lg border border-neutral-800 shadow-lg text-xs">
           <button
             onClick={onToggleAutonomous}
@@ -901,118 +1001,195 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
 };
 
 /**
- * Helper to build 3D obstacle meshes (crates/cubes like Gazebo screenshot, pillars, walls)
- * based on the active environment preset.
+ * Procedural 3D Wall Generation:
+ * Automatically builds 3D wall blocks and connecting wall slabs wherever the sonar sensor detects an obstacle!
+ * No static pre-baked objects are shown.
  */
-function rebuildPresetObstacles(group: THREE.Group, preset: MapEnvironmentPreset) {
-  // Clear old meshes
+function rebuildDiscoveredWalls(group: THREE.Group, points: DiscoveredPoint2D[]) {
+  // Clear old dynamic wall meshes
   while (group.children.length > 0) {
     const child = group.children[0];
+    if ((child as any).geometry) {
+      (child as any).geometry.dispose();
+    }
     group.remove(child);
   }
 
-  const presetData = WORLD_PRESETS[preset];
-  if (!presetData) return;
+  if (points.length === 0) return;
 
-  // Materials
-  // 1. Gazebo Crate / Box Material (just like the crate in the user's reference image)
-  const crateMat = new THREE.MeshStandardMaterial({
-    color: 0x854d0e, // Industrial Timber Crate / Gazebo Brown Box
-    roughness: 0.65,
-    metalness: 0.1,
+  const wallHeight = 0.75; // 75 cm wall height
+  const wallWidth = 0.22; // 22 cm wall thickness
+
+  const wallMatNormal = new THREE.MeshStandardMaterial({
+    color: 0x334155, // Dark slate concrete barrier
+    roughness: 0.55,
+    metalness: 0.35,
   });
 
-  // 2. Concrete Pillar Material
-  const pillarMat = new THREE.MeshStandardMaterial({
-    color: 0x475569, // Slate Concrete
-    roughness: 0.8,
-    metalness: 0.2,
+  const wallMatCloseAlert = new THREE.MeshStandardMaterial({
+    color: 0x4c1d24, // Red tinted barrier
+    roughness: 0.45,
+    metalness: 0.4,
   });
 
-  // 3. Wall Material
-  const wallMat = new THREE.MeshStandardMaterial({
-    color: 0x334155, // Dark slate laboratory wall
-    roughness: 0.7,
-    metalness: 0.15,
+  const topRimMatCyan = new THREE.MeshStandardMaterial({
+    color: 0x06b6d4,
+    emissive: 0x0891b2,
+    emissiveIntensity: 0.7,
   });
 
-  // 4. Anomaly / Relic Material
-  const anomalyMat = new THREE.MeshStandardMaterial({
-    color: 0x8b5cf6,
-    emissive: 0x6d28d9,
-    emissiveIntensity: 0.5,
-    roughness: 0.3,
-    metalness: 0.6,
+  const topRimMatRose = new THREE.MeshStandardMaterial({
+    color: 0xf43f5e,
+    emissive: 0xe11d48,
+    emissiveIntensity: 0.8,
   });
 
-  // Build Walls as 3D extruded boxes
-  presetData.walls.forEach((w) => {
-    // Map coordinates from cm to meters
-    const x1 = w.x1 / 100;
-    const z1 = -w.y1 / 100;
-    const x2 = w.x2 / 100;
-    const z2 = -w.y2 / 100;
+  // 1. Spawn a 3D wall block at each detected obstacle point
+  points.forEach((p) => {
+    const wx = p.worldX / 100;
+    const wz = -p.worldY / 100;
+    const isClose = p.distanceCm <= 40;
 
-    const dx = x2 - x1;
-    const dz = z2 - z1;
-    const length = Math.hypot(dx, dz);
-    const angle = Math.atan2(dz, dx);
+    const blockGroup = new THREE.Group();
+    blockGroup.position.set(wx, 0, wz);
 
-    const wallHeight = w.type === 'obstacle' ? 0.6 : 0.8;
-    const wallThickness = 0.12;
+    // Wall pillar block
+    const blockGeo = new THREE.BoxGeometry(wallWidth, wallHeight, wallWidth);
+    const blockMesh = new THREE.Mesh(blockGeo, isClose ? wallMatCloseAlert : wallMatNormal);
+    blockMesh.position.y = wallHeight / 2;
+    blockMesh.castShadow = true;
+    blockMesh.receiveShadow = true;
+    blockGroup.add(blockMesh);
 
-    const wallGeo = new THREE.BoxGeometry(length, wallHeight, wallThickness);
-    const wallMesh = new THREE.Mesh(wallGeo, w.type === 'obstacle' ? crateMat : wallMat);
+    // Glowing top rim cap
+    const capGeo = new THREE.BoxGeometry(wallWidth * 1.05, 0.04, wallWidth * 1.05);
+    const capMesh = new THREE.Mesh(capGeo, isClose ? topRimMatRose : topRimMatCyan);
+    capMesh.position.y = wallHeight + 0.02;
+    blockGroup.add(capMesh);
 
-    // Center position
-    wallMesh.position.set((x1 + x2) / 2, wallHeight / 2, (z1 + z2) / 2);
-    wallMesh.rotation.y = -angle;
-    wallMesh.castShadow = true;
-    wallMesh.receiveShadow = true;
-
-    group.add(wallMesh);
+    group.add(blockGroup);
   });
 
-  // Build Cylinders / Crates from CircularObstacles
-  presetData.circles.forEach((c) => {
-    const cx = c.cx / 100;
-    const cz = -c.cy / 100;
-    const radius = c.radius / 100;
+  // 2. Connect adjacent detected obstacle points with continuous 3D wall slabs (< 35 cm apart)
+  const connectedPairs = new Set<string>();
+  for (let i = 0; i < points.length; i++) {
+    const p1 = points[i];
+    const x1 = p1.worldX / 100;
+    const z1 = -p1.worldY / 100;
 
-    if (c.type === 'anomaly') {
-      // Ancient Relic Monolith
-      const monolithGeo = new THREE.OctahedronGeometry(radius * 1.2, 0);
-      const monolithMesh = new THREE.Mesh(monolithGeo, anomalyMat);
-      monolithMesh.position.set(cx, radius * 1.4, cz);
-      monolithMesh.castShadow = true;
-      monolithMesh.receiveShadow = true;
-      group.add(monolithMesh);
-    } else if (c.radius > 18) {
-      // Large obstacle: Render as a Gazebo Cargo Crate / Cube (like in reference image!)
-      const boxSize = radius * 1.8;
-      const boxGeo = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
-      const boxMesh = new THREE.Mesh(boxGeo, crateMat);
-      boxMesh.position.set(cx, boxSize / 2, cz);
-      boxMesh.castShadow = true;
-      boxMesh.receiveShadow = true;
+    for (let j = i + 1; j < Math.min(i + 12, points.length); j++) {
+      const p2 = points[j];
+      const x2 = p2.worldX / 100;
+      const z2 = -p2.worldY / 100;
 
-      // Add metal corner brackets to look exactly like the Gazebo crate
-      const frameGeo = new THREE.BoxGeometry(boxSize * 1.02, boxSize * 0.08, boxSize * 1.02);
-      const frameMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.8, roughness: 0.3 });
-      const frameMesh = new THREE.Mesh(frameGeo, frameMat);
-      frameMesh.position.set(cx, boxSize / 2, cz);
-      group.add(frameMesh);
+      const distM = Math.hypot(x2 - x1, z2 - z1);
+      if (distM > 0.04 && distM < 0.35) {
+        const pairKey = i < j ? `${i}-${j}` : `${j}-${i}`;
+        if (connectedPairs.has(pairKey)) continue;
+        connectedPairs.add(pairKey);
 
-      group.add(boxMesh);
-    } else {
-      // Cylinder Pillar
-      const height = 0.75;
-      const cylGeo = new THREE.CylinderGeometry(radius, radius, height, 20);
-      const cylMesh = new THREE.Mesh(cylGeo, pillarMat);
-      cylMesh.position.set(cx, height / 2, cz);
-      cylMesh.castShadow = true;
-      cylMesh.receiveShadow = true;
-      group.add(cylMesh);
+        const dx = x2 - x1;
+        const dz = z2 - z1;
+        const angle = Math.atan2(dz, dx);
+        const midX = (x1 + x2) / 2;
+        const midZ = (z1 + z2) / 2;
+
+        const isClose = p1.distanceCm <= 40 || p2.distanceCm <= 40;
+
+        const slabGeo = new THREE.BoxGeometry(distM, wallHeight, wallWidth * 0.85);
+        const slabMesh = new THREE.Mesh(slabGeo, isClose ? wallMatCloseAlert : wallMatNormal);
+        slabMesh.position.set(midX, wallHeight / 2, midZ);
+        slabMesh.rotation.y = -angle;
+        slabMesh.castShadow = true;
+        slabMesh.receiveShadow = true;
+        group.add(slabMesh);
+
+        // Glowing top rim for connecting slab
+        const slabCapGeo = new THREE.BoxGeometry(distM, 0.03, wallWidth * 0.88);
+        const slabCapMesh = new THREE.Mesh(slabCapGeo, isClose ? topRimMatRose : topRimMatCyan);
+        slabCapMesh.position.set(midX, wallHeight + 0.015, midZ);
+        slabCapMesh.rotation.y = -angle;
+        group.add(slabCapMesh);
+      }
     }
-  });
+  }
+}
+
+/**
+ * Clears Fog of War at a specific world coordinate (X_cm, Y_cm)
+ */
+function clearFogAtWorldPos(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  texture: THREE.CanvasTexture,
+  worldXCm: number,
+  worldYCm: number,
+  radiusM: number
+) {
+  // World bounds: -30m to +30m (60m span)
+  const px = ((worldXCm / 100 + 30) / 60) * canvas.width;
+  const py = ((-worldYCm / 100 + 30) / 60) * canvas.height;
+  const radiusPx = (radiusM / 60) * canvas.width;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+
+  const grad = ctx.createRadialGradient(px, py, radiusPx * 0.2, px, py, radiusPx);
+  grad.addColorStop(0, 'rgba(0, 0, 0, 1.0)');
+  grad.addColorStop(0.7, 'rgba(0, 0, 0, 0.85)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(px, py, radiusPx, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+  texture.needsUpdate = true;
+}
+
+/**
+ * Clears Fog of War along the vision / sonar cone in front of the robot
+ */
+function clearFogVisionFan(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  texture: THREE.CanvasTexture,
+  worldXCm: number,
+  worldYCm: number,
+  botHeadingDeg: number,
+  sensorAngleDeg: number,
+  distanceCm: number
+) {
+  const px = ((worldXCm / 100 + 30) / 60) * canvas.width;
+  const py = ((-worldYCm / 100 + 30) / 60) * canvas.height;
+
+  // Global beam angle
+  const offsetAngle = sensorAngleDeg - 90;
+  const beamAngleDeg = botHeadingDeg + offsetAngle;
+  // Convert heading to canvas angle (in world 2D, Y+ is North, so in canvas Y- is North)
+  const beamRad = (-beamAngleDeg * Math.PI) / 180;
+
+  const beamReachM = Math.min(distanceCm, 250) / 100;
+  const reachPx = (beamReachM / 60) * canvas.width;
+  const coneSpreadRad = (18 * Math.PI) / 180; // 18 degree sonar spread
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.arc(px, py, reachPx, beamRad - coneSpreadRad, beamRad + coneSpreadRad);
+  ctx.closePath();
+
+  const grad = ctx.createRadialGradient(px, py, reachPx * 0.1, px, py, reachPx);
+  grad.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
+  grad.addColorStop(0.8, 'rgba(0, 0, 0, 0.6)');
+  grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.restore();
+  texture.needsUpdate = true;
 }

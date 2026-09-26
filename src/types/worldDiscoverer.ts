@@ -45,15 +45,22 @@ export interface BotPose {
   totalDistanceCm: number;
 }
 
-export type SweepDirection = 'forward' | 'backward'; // 0->180 or 180->0
+export type SweepDirection = 'forward' | 'backward';
+
+export type ScanMode = 'narrow_patrol' | 'obstacle_panoramic'; // ±15° vs -90° to +90° (0° to 180°)
 
 export interface RoverSweepState {
-  currentAngle: number; // 0 to 180 relative to bot front
+  currentAngle: number; // 0 to 180 (90° is center forward)
+  relativeAngle: number; // -90° to +90° (0° is forward)
   targetAngle: number;
   sweepDirection: SweepDirection;
   isScanning: boolean;
-  sweepPeriodSeconds: number; // Exactly 20s as requested
-  elapsedInSweepSeconds: number; // 0 to 20.0s
+  scanMode: ScanMode;
+  isObstacleDetected: boolean;
+  obstacleDistanceCm: number | null; // Exact cm to detected obstacle
+  obstacleThresholdCm: number; // 40 cm trigger
+  sweepPeriodSeconds: number; // seconds for cycle
+  elapsedInSweepSeconds: number;
   totalSweepsCompleted: number;
   currentDistanceCm: number;
   maxRangeCm: number; // 100, 200, 300, 400 cm

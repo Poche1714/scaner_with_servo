@@ -27,10 +27,10 @@ export const FirmwareEsp32Modal: React.FC<FirmwareEsp32ModalProps> = ({ isOpen, 
             <Cpu className="w-5 h-5 text-amber-400" />
             <div>
               <h2 className="text-sm font-bold text-neutral-100">
-                Firmware ESP32 — Rover de Mapeo y Trayectoria 2D (180° / 20s)
+                Firmware ESP32 — Sonar Inteligente & Trayecto (Inicio 90°, Sondeo ±15°, 180° a ≤ 40 cm)
               </h2>
               <p className="text-[11px] text-neutral-400">
-                Arduino C++ para Servomotor, HC-SR04 y Control de Tracción del Bot
+                Arduino C++ con retorno de distancia en cm y barrido panorámico condicional
               </p>
             </div>
           </div>
@@ -89,12 +89,15 @@ export const FirmwareEsp32Modal: React.FC<FirmwareEsp32ModalProps> = ({ isOpen, 
           {/* Sweep & Motion Specs */}
           <div className="bg-neutral-950/80 rounded-xl border border-neutral-800 p-3.5 flex flex-wrap items-center justify-between gap-2 text-neutral-300">
             <div>
-              <span className="font-semibold text-emerald-400">Sincronización Radar & Movimiento:</span>
+              <span className="font-semibold text-emerald-400">Algoritmo de Sondeo Inteligente:</span>
               <p className="text-[11px] text-neutral-400 mt-0.5">
-                Barrido continuo de 180° cada 20s (9°/segundo) mientras el bot se desplaza registrando su trayecto.
+                • Inicio en 90° (0° relativo).<br />
+                • Sondeo frontal estrecho de 0 a 15° y 0 a -15° (75° a 105°).<br />
+                • Al detectar obstáculo a &le; 40 cm se activa barrido panorámico de -90° a +90° (0° a 180°).<br />
+                • Telemetría continua devolviendo los cm exactos: <code>PING:angulo,dist</code> y <code>DIST:dist</code>.
               </p>
             </div>
-            <div className="font-mono text-neutral-400 text-[11px] bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800">
+            <div className="font-mono text-neutral-400 text-[11px] bg-neutral-900 px-2.5 py-1 rounded-md border border-neutral-800 self-start">
               115200 Baudios
             </div>
           </div>

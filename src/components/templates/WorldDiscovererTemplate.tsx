@@ -102,9 +102,13 @@ export const WorldDiscovererTemplate: React.FC = () => {
           />
         )}
 
-        {/* Exploration & Bot Route HUD (Trajectory meters, fog cleared, obstacles) */}
+        {/* Exploration & Bot Route HUD (Trajectory meters, fog cleared, obstacles, and exact cm distance) */}
         <ExplorationHUD
           stats={explorationStats}
+          currentDistanceCm={roverState.currentDistanceCm}
+          isObstacleDetected={roverState.isObstacleDetected}
+          obstacleThresholdCm={roverState.obstacleThresholdCm}
+          scanMode={roverState.scanMode}
           theme={visualTheme}
           onThemeChange={setVisualTheme}
           isMuted={isMuted}
