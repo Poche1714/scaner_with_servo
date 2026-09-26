@@ -49,7 +49,8 @@ export type SweepDirection = 'forward' | 'backward';
 
 export type ScanMode = 
   | 'narrow_patrol'           // Vigilancia normal ±15° (de -15° a +15° relativo, 75° a 105° servo)
-  | 'obstacle_focused_survey' // Sondeo enfocado del objeto detectado (+25° más y -10° menos)
+  | 'obstacle_focused_survey' // Sondeo enfocado del objeto detectado (+25° más y -10° menos, 3 barridos)
+  | 'survey_paused'           // Sondeo detenido tras completar los 3 barridos (se reinicia al girar el bot)
   | 'obstacle_panoramic';     // Barrido de seguridad delimitado a -55° y +55° relativo (35° a 145° servo)
 
 export interface RoverSweepState {
@@ -67,6 +68,7 @@ export interface RoverSweepState {
   surveyMinAngle: number | null;
   surveyMaxAngle: number | null;
   surveyStepDirection: 1 | -1;
+  surveyPassesCount: number; // 0 a 3 barridos del objeto
   sweepPeriodSeconds: number; // seconds for cycle
   elapsedInSweepSeconds: number;
   totalSweepsCompleted: number;

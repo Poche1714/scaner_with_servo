@@ -188,13 +188,13 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
       <div className="flex flex-col items-center gap-2 py-1">
         {/* Forward */}
         <button
-          onClick={() => onDriveForward(8, motorPwm)}
+          onClick={() => onDriveForward(20, motorPwm)}
           disabled={disabled || isAutonomous}
           className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-          title={`Avanzar con PWM ${motorPwm} (W / Flecha Arriba)`}
+          title={`Avanzar +20cm con PWM ${motorPwm} (W / Flecha Arriba)`}
         >
           <ArrowUp className="w-5 h-5" />
-          <span className="text-[9px] font-mono opacity-60">FWD</span>
+          <span className="text-[9px] font-mono opacity-60">FWD +20</span>
         </button>
 
         {/* Left - Stop - Right */}
@@ -232,25 +232,25 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
 
         {/* Backward */}
         <button
-          onClick={() => onDriveBackward(8, motorPwm)}
+          onClick={() => onDriveBackward(20, motorPwm)}
           disabled={disabled || isAutonomous}
           className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-          title={`Retroceder con PWM ${motorPwm} (S / Flecha Abajo)`}
+          title={`Retroceder -20cm con PWM ${motorPwm} (S / Flecha Abajo)`}
         >
           <ArrowDown className="w-5 h-5" />
-          <span className="text-[9px] font-mono opacity-60">REV</span>
+          <span className="text-[9px] font-mono opacity-60">REV -20</span>
         </button>
       </div>
 
       {/* Quick Impulse Buttons */}
       <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
         <button
-          onClick={() => onDriveForward(12, motorPwm)}
+          onClick={() => onDriveForward(30, motorPwm)}
           disabled={disabled || isAutonomous}
           className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
-          title="Impulso de avance calibrado 12cm"
+          title="Impulso de avance calibrado 30cm"
         >
-          Paso +12cm
+          Paso +30cm
         </button>
         <button
           onClick={() => onTurnLeft(30, motorPwm)}

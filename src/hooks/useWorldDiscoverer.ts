@@ -86,6 +86,7 @@ export function useWorldDiscoverer() {
     surveyMinAngle: null,
     surveyMaxAngle: null,
     surveyStepDirection: 1,
+    surveyPassesCount: 0, // Contador de los 3 barridos de sondeo enfocado
     sweepPeriodSeconds: 20,
     elapsedInSweepSeconds: 0,
     totalSweepsCompleted: 0,
@@ -119,6 +120,7 @@ export function useWorldDiscoverer() {
   const sweepIntervalRef = useRef<any>(null);
   const autonomousNavIntervalRef = useRef<any>(null);
   const lastPingSoundTimeRef = useRef<number>(0);
+  const moveTimerRef = useRef<any>(null);
   const botPoseRef = useRef<BotPose>(botPose);
   botPoseRef.current = botPose;
 
@@ -160,7 +162,7 @@ export function useWorldDiscoverer() {
     [isConnected, addLog]
   );
 
-  // Record a detected point into the Global 2D World Map
+  // Record a detected point into the Global 2D World Map (Only if < 70cm, and clears phantom walls if distance increased)
   const recordPoint = useCallback(
     (
       sensorAngleDeg: number,
@@ -177,35 +179,69 @@ export function useWorldDiscoverer() {
         lastPingSoundTimeRef.current = now;
       }
 
-      // Calculate global coordinates from current bot position & heading
-      let worldX: number;
-      let worldY: number;
-
-      if (providedWorldCoord) {
-        worldX = providedWorldCoord.worldX;
-        worldY = providedWorldCoord.worldY;
-      } else {
-        // Sensor angle 90° = forward along bot heading. 0° = right (+90°). 180° = left (-90°).
-        const offsetAngle = sensorAngleDeg - 90;
-        const beamAngleDeg = currentBot.heading + offsetAngle;
-        const beamRad = (beamAngleDeg * Math.PI) / 180;
-        worldX = Number((currentBot.x + distanceCm * Math.cos(beamRad)).toFixed(1));
-        worldY = Number((currentBot.y + distanceCm * Math.sin(beamRad)).toFixed(1));
-      }
+      // Beam angle in world coordinate system
+      const offsetAngle = sensorAngleDeg - 90;
+      const beamAngleDeg = currentBot.heading + offsetAngle;
+      const beamRad = (beamAngleDeg * Math.PI) / 180;
 
       setPoints((prev) => {
-        // Spatial clustering in world space: reinforce point if within 8cm
-        const existingIdx = prev.findIndex(
-          (p) => Math.hypot(p.worldX - worldX, p.worldY - worldY) < 8.0
+        // 1. DINÁMICA DE BORRADO DE PAREDES:
+        // Si teníamos un punto ya pintado a lo largo de esta línea de visión pero la distancia
+        // ahora medida es MAYOR (distancia despejada), se borra la pared en ese punto.
+        const filteredPoints = prev.filter((p) => {
+          const dx = p.worldX - currentBot.x;
+          const dy = p.worldY - currentBot.y;
+          const distToP = Math.hypot(dx, dy);
+
+          // Ángulo desde el bot hacia el punto existente
+          let angleToP = (Math.atan2(dy, dx) * 180) / Math.PI;
+          let angleDiff = Math.abs(angleToP - beamAngleDeg) % 360;
+          if (angleDiff > 180) angleDiff = 360 - angleDiff;
+
+          // Si el punto está en el haz del sonar (cono de ~9°)
+          if (angleDiff < 9.0) {
+            // Si la distancia medida actual es mayor que la posición del punto (con margen de 7cm)
+            if (distanceCm > distToP + 7.0) {
+              // El objeto se quitó o el haz atraviesa libremente: BORRAR LA PARED
+              return false;
+            }
+          }
+          return true;
+        });
+
+        // 2. REGLA ESTRICTA: "solo pinte las paredes si la distancia es menor a 70 cm"
+        if (distanceCm >= 70.0) {
+          // No pintar pared en el simulador si la distancia es >= 70 cm
+          return filteredPoints;
+        }
+
+        // Calcular coordenadas globales exactas para la pared a distancia < 70 cm
+        let worldX: number;
+        let worldY: number;
+
+        if (providedWorldCoord) {
+          worldX = providedWorldCoord.worldX;
+          worldY = providedWorldCoord.worldY;
+        } else {
+          worldX = Number((currentBot.x + distanceCm * Math.cos(beamRad)).toFixed(1));
+          worldY = Number((currentBot.y + distanceCm * Math.sin(beamRad)).toFixed(1));
+        }
+
+        // Spatial clustering: reforzar si está dentro de 7cm
+        const existingIdx = filteredPoints.findIndex(
+          (p) => Math.hypot(p.worldX - worldX, p.worldY - worldY) < 7.0
         );
 
         if (existingIdx >= 0) {
-          const updated = [...prev];
+          const updated = [...filteredPoints];
           const item = updated[existingIdx];
           updated[existingIdx] = {
             ...item,
             hits: item.hits + 1,
             timestamp: now,
+            distanceCm,
+            worldX,
+            worldY,
             type: classification || item.type,
           };
           return updated;
@@ -223,14 +259,13 @@ export function useWorldDiscoverer() {
           timestamp: now,
           sweepCycle: roverState.totalSweepsCompleted,
           hits: 1,
-          type: classification || (distanceCm < 70 ? 'obstacle' : 'wall'),
+          type: classification || (distanceCm < 40 ? 'obstacle' : 'wall'),
         };
 
-        // Maintain up to 900 high-confidence world obstacle points
-        if (prev.length > 900) {
-          return [...prev.slice(prev.length - 899), newPoint];
+        if (filteredPoints.length > 900) {
+          return [...filteredPoints.slice(filteredPoints.length - 899), newPoint];
         }
-        return [...prev, newPoint];
+        return [...filteredPoints, newPoint];
       });
     },
     [roverState.totalSweepsCompleted]
@@ -270,9 +305,11 @@ export function useWorldDiscoverer() {
     []
   );
 
+
+
   // Bot Navigation Engine (Drive Controls)
   const moveBot = useCallback(
-    (deltaForwardCm: number, deltaHeadingDeg: number, speedCmS: number = 15) => {
+    (deltaForwardCm: number, deltaHeadingDeg: number, speedCmS: number = 20) => {
       setBotPose((prev) => {
         const rad = (prev.heading * Math.PI) / 180;
         const newX = prev.x + deltaForwardCm * Math.cos(rad);
@@ -294,50 +331,92 @@ export function useWorldDiscoverer() {
         recordTrajectoryBreadcrumb(nextPose);
         return nextPose;
       });
+
+      // Clear previous timeout and set speed/moving to 0 after short driving pulse
+      if (moveTimerRef.current) clearTimeout(moveTimerRef.current);
+      if (speedCmS > 0) {
+        moveTimerRef.current = setTimeout(() => {
+          setBotPose((prev) => ({ ...prev, isMoving: false, speed: 0 }));
+        }, 600);
+      }
     },
     [isAutonomous, recordTrajectoryBreadcrumb]
   );
 
-  // Manual driving actions with calibrated PWM (175 - 198)
+  // Reiniciar el sondeo a 90° (0° relativo / Frente) y modo normal ±15° al girar el bot
+  const restartSonarSweep = useCallback(() => {
+    setRoverState((prev) => ({
+      ...prev,
+      isScanning: true,
+      scanMode: 'narrow_patrol',
+      currentAngle: 90,
+      targetAngle: 90,
+      relativeAngle: 0,
+      sweepDirection: 'forward',
+      surveyPassesCount: 0,
+      surveyMinAngle: null,
+      surveyMaxAngle: null,
+      surveyStepDirection: 1,
+      isObstacleDetected: false,
+      obstacleDistanceCm: null,
+      obstacleDetectedAngle: null,
+    }));
+    sendSerialCommand('START');
+    sendSerialCommand('GOTO:90');
+    addLog('Giro del bot detectado: Sondeo REINICIADO en 90° (Vigilancia normal ±15°).', 'sys');
+  }, [sendSerialCommand, addLog]);
+
+  // Manual driving actions with calibrated PWM (175 - 198) and noticeable step size (20cm)
   const driveForward = useCallback(
-    (distCm: number = 8, customPwm?: number) => {
+    (distCm: number = 20, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
-      const speedCmS = Number(((activePwm / 185) * 16).toFixed(1));
+      const speedCmS = Number(((activePwm / 185) * 25).toFixed(1));
       moveBot(distCm, 0, speedCmS);
-      sendSerialCommand(`MOVE:F,${activePwm}`);
+      sendSerialCommand(`MOVE:F,${activePwm},200`);
+      addLog(
+        `Avanzando bot +${distCm} cm hacia rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}).`,
+        'sys'
+      );
     },
-    [moveBot, sendSerialCommand, motorPwm]
+    [moveBot, sendSerialCommand, motorPwm, addLog]
   );
 
   const driveBackward = useCallback(
-    (distCm: number = 8, customPwm?: number) => {
+    (distCm: number = 20, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
-      const speedCmS = Number(((activePwm / 185) * 14).toFixed(1));
+      const speedCmS = Number(((activePwm / 185) * 20).toFixed(1));
       moveBot(-distCm, 0, speedCmS);
-      sendSerialCommand(`MOVE:B,${activePwm}`);
+      sendSerialCommand(`MOVE:B,${activePwm},200`);
+      addLog(
+        `Retrocediendo bot -${distCm} cm desde rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}).`,
+        'sys'
+      );
     },
-    [moveBot, sendSerialCommand, motorPwm]
+    [moveBot, sendSerialCommand, motorPwm, addLog]
   );
 
   const turnLeft = useCallback(
     (deg: number = 15, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
-      moveBot(0, deg, 10);
+      moveBot(0, deg, 15);
       sendSerialCommand(`TURN:L,${activePwm},${deg}`);
+      restartSonarSweep(); // Al girar el bot, reiniciar el sondeo
     },
-    [moveBot, sendSerialCommand, motorPwm]
+    [moveBot, sendSerialCommand, motorPwm, restartSonarSweep]
   );
 
   const turnRight = useCallback(
     (deg: number = 15, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
-      moveBot(0, -deg, 10);
+      moveBot(0, -deg, 15);
       sendSerialCommand(`TURN:R,${activePwm},${deg}`);
+      restartSonarSweep(); // Al girar el bot, reiniciar el sondeo
     },
-    [moveBot, sendSerialCommand, motorPwm]
+    [moveBot, sendSerialCommand, motorPwm, restartSonarSweep]
   );
 
   const stopBot = useCallback(() => {
+    if (moveTimerRef.current) clearTimeout(moveTimerRef.current);
     setBotPose((prev) => ({ ...prev, speed: 0, isMoving: false }));
     sendSerialCommand('STOP');
   }, [sendSerialCommand]);
@@ -402,25 +481,25 @@ export function useWorldDiscoverer() {
         case 'W':
         case 'ArrowUp':
           e.preventDefault();
-          driveForward(6);
+          driveForward(20);
           break;
         case 's':
         case 'S':
         case 'ArrowDown':
           e.preventDefault();
-          driveBackward(6);
+          driveBackward(20);
           break;
         case 'a':
         case 'A':
         case 'ArrowLeft':
           e.preventDefault();
-          turnLeft(12);
+          turnLeft(15);
           break;
         case 'd':
         case 'D':
         case 'ArrowRight':
           e.preventDefault();
-          turnRight(12);
+          turnRight(15);
           break;
         case ' ':
           e.preventDefault();
@@ -877,12 +956,15 @@ export function useWorldDiscoverer() {
         let surveyMax = prev.surveyMaxAngle;
         let surveyStepDir = prev.surveyStepDirection;
 
-        // 2. Detección de obstáculo a <= 40 cm
-        if (newDist <= THRESHOLD_CM) {
+        let surveyPasses = prev.surveyPassesCount || 0;
+        let isScanningActive = prev.isScanning;
+
+        // 2. Detección de obstáculo a < 40 cm
+        if (newDist < THRESHOLD_CM) {
           isObstacle = true;
           obstacleDist = newDist;
 
-          // Si estaba en patrullaje normal, iniciar sondeo enfocado del objeto
+          // Si estaba en patrullaje normal, iniciar 3 barridos de sondeo enfocado del objeto
           if (newMode === 'narrow_patrol') {
             const relDetected = Math.round(currentSampleAngle - CENTER_ANGLE);
             obsDetectedAngle = relDetected;
@@ -892,10 +974,11 @@ export function useWorldDiscoverer() {
             surveyMax = CENTER_ANGLE + targetMaxRel;
             surveyMin = CENTER_ANGLE + targetMinRel;
             surveyStepDir = 1; // Primero registrar los +25° más
+            surveyPasses = 0;  // Iniciar conteo de los 3 barridos
             newMode = 'obstacle_focused_survey';
 
             addLog(
-              `¡OBSTÁCULO DETECTADO a ${newDist.toFixed(1)} cm en ${relDetected}°! Iniciando sondeo enfocado: ${targetMaxRel}° (+25°) y ${targetMinRel}° (-10°)...`,
+              `¡OBSTÁCULO DETECTADO a ${newDist.toFixed(1)} cm (< 40 cm) en ${relDetected}°! Iniciando 3 barridos de sondeo enfocado (+25° y -10°)...`,
               'sys'
             );
             radarAudio.playObstacleAlert();
@@ -906,7 +989,7 @@ export function useWorldDiscoverer() {
 
         // 3. Avance según el modo activo
         if (newMode === 'obstacle_focused_survey') {
-          // Sondeo enfocado del objeto (+25° más y -10° menos del ángulo detectado)
+          // Sondeo enfocado del objeto (+25° más y -10° menos del ángulo detectado, 3 barridos)
           const stepDeg = 2.0;
           const minTarget = surveyMin ?? (CENTER_ANGLE - 10);
           const maxTarget = surveyMax ?? (CENTER_ANGLE + 25);
@@ -923,20 +1006,31 @@ export function useWorldDiscoverer() {
             newAngle -= stepDeg;
             if (newAngle <= minTarget) {
               newAngle = minTarget;
-              // Sondeo enfocado completado: retornar inmediatamente al estado normal
-              newMode = 'narrow_patrol';
-              surveyMin = null;
-              surveyMax = null;
-              obsDetectedAngle = null;
-              newDir = 'forward';
-              newSweeps += 1;
-              radarAudio.playSweepCycleComplete();
-              addLog(
-                `Sondeo enfocado de objeto completado (+25° y -10° mapeados). Retornando a vigilancia normal ±15° centrada en 90°...`,
-                'sys'
-              );
+              const completedPasses = surveyPasses + 1;
+              if (completedPasses < 3) {
+                // Ejecutar el siguiente barrido de los 3 solicitados
+                surveyPasses = completedPasses;
+                surveyStepDir = 1; // Siguiente barrido hacia +25°
+                addLog(
+                  `Barrido enfocado del objeto ${completedPasses}/3 completado. Ejecutando barrido ${completedPasses + 1}...`,
+                  'sys'
+                );
+              } else {
+                // ¡Se han completado los 3 barridos del objeto! Detener el sondeo
+                newMode = 'survey_paused';
+                surveyPasses = 3;
+                isScanningActive = false; // "para de realizar el sondeo"
+                radarAudio.playSweepCycleComplete();
+                addLog(
+                  '¡3 barridos del objeto completados con éxito! Sondeo DETENIDO/PAUSADO. Gire el bot para reiniciar el sondeo.',
+                  'sys'
+                );
+                sendSerialCommand('STOP');
+              }
             }
           }
+        } else if (newMode === 'survey_paused') {
+          // Sondeo detenido tras los 3 barridos. Permanece quieto hasta que el bot gire.
         } else if (newMode === 'narrow_patrol') {
           // Vigilancia normal: oscilación ±15° (de 75° a 105°)
           const minNarrow = CENTER_ANGLE - NARROW_SPAN; // 75°
@@ -999,6 +1093,8 @@ export function useWorldDiscoverer() {
 
         return {
           ...prev,
+          isScanning: isScanningActive,
+          surveyPassesCount: surveyPasses,
           currentAngle: Number(newAngle.toFixed(1)),
           relativeAngle,
           sweepDirection: newDir,

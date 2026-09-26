@@ -23,14 +23,18 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
     currentDistanceCm,
   } = roverState;
 
+  const isPaused = scanMode === 'survey_paused' || !roverState.isScanning;
   const isFocusedSurvey = scanMode === 'obstacle_focused_survey';
   const isNarrow = scanMode === 'narrow_patrol';
   const isClose = currentDistanceCm <= obstacleThresholdCm;
+  const passes = roverState.surveyPassesCount || 0;
 
   return (
     <div
       className={`rounded-xl p-3.5 flex flex-col gap-3 transition-colors border shadow-lg ${
-        isFocusedSurvey
+        isPaused
+          ? 'bg-purple-950/40 border-purple-500/50 shadow-purple-950/30'
+          : isFocusedSurvey
           ? 'bg-amber-950/40 border-amber-500/50 shadow-amber-950/30'
           : isClose
           ? 'bg-rose-950/40 border-rose-500/50 shadow-rose-950/30'
@@ -40,7 +44,9 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
       {/* Header with Mode Status */}
       <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-2">
-          {isFocusedSurvey ? (
+          {isPaused ? (
+            <CheckCircle2 className="w-4 h-4 text-purple-400" />
+          ) : isFocusedSurvey ? (
             <Target className="w-4 h-4 text-amber-400 animate-spin" />
           ) : isClose ? (
             <ShieldAlert className="w-4 h-4 text-rose-400 animate-pulse" />
@@ -48,8 +54,10 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
             <Radio className="w-4 h-4 text-emerald-400" />
           )}
           <span className="font-semibold text-neutral-100">
-            {isFocusedSurvey
-              ? `Sondeo Enfocado (+25° / -10°)`
+            {isPaused
+              ? 'Sondeo Completado (3 Barridos) · Detenido'
+              : isFocusedSurvey
+              ? `Sondeo Enfocado (${Math.min(3, passes + 1)}/3 barridos)`
               : isNarrow
               ? 'Vigilancia Frontal (0° ±15°)'
               : 'Barrido Delimitado (-55° a +55°)'}
@@ -58,15 +66,19 @@ export const SweepProgressTimer: React.FC<SweepProgressTimerProps> = ({ roverSta
 
         <span
           className={`px-2 py-0.5 rounded text-[11px] font-mono font-medium border ${
-            isFocusedSurvey
+            isPaused
+              ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+              : isFocusedSurvey
               ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
               : isClose
               ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse'
               : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
           }`}
         >
-          {isFocusedSurvey
-            ? `SONDEO OBJETO (${obstacleDetectedAngle !== null ? (obstacleDetectedAngle > 0 ? `+${obstacleDetectedAngle}°` : `${obstacleDetectedAngle}°`) : ''})`
+          {isPaused
+            ? 'GIRA EL BOT PARA REINICIAR'
+            : isFocusedSurvey
+            ? `BARRIDO ${Math.min(3, passes + 1)}/3`
             : isClose
             ? '¡OBSTÁCULO <= 40cm!'
             : 'VÍA DESPEJADA'}

@@ -86,7 +86,8 @@ const unsigned long SERVO_SETTLE_MS = 40; // Espera para estabilización mecáni
 
 enum ScanMode {
   NARROW_PATROL,           // Vigilancia normal ±15° (75° a 105°)
-  OBJECT_FOCUSED_SURVEY,   // Sondeo enfocado del objeto detectado (+25° más y -10° menos)
+  OBJECT_FOCUSED_SURVEY,   // Sondeo enfocado del objeto detectado (+25° más y -10° menos, 3 barridos)
+  SURVEY_PAUSED,           // Sondeo detenido tras 3 barridos (se reactiva al girar el bot)
   SAFETY_PANORAMIC_55      // Barrido de seguridad delimitado a ±55° (35° a 145°)
 };
 
@@ -97,11 +98,12 @@ bool isScanningActive      = true;
 unsigned long lastStepTime = 0;
 unsigned long totalSweepsCompleted = 0;
 
-// Variables del sondeo enfocado de objeto
+// Variables del sondeo enfocado de objeto (3 barridos)
 int surveyTargetAngleRel   = 0;
 int surveyMinServoAngle    = CENTER_ANGLE - 10;
 int surveyMaxServoAngle    = CENTER_ANGLE + 25;
 int surveyStepDirection    = 1;
+int surveyPassCount        = 0; // Conteo de 0 a 3 barridos
 
 // Odometría estimada
 float posX_cm = 0.0;
@@ -123,30 +125,38 @@ void stopMotors() {
   analogWrite(MOTOR_R_IN2, 0);
 }
 
-void driveForward(int pwm = -1) {
+void driveForward(int pwm = -1, int durationMs = 200) {
   int speed = (pwm > 0) ? clampPwm(pwm) : currentMotorPwm;
   analogWrite(MOTOR_L_IN1, speed);
   analogWrite(MOTOR_L_IN2, 0);
   analogWrite(MOTOR_R_IN1, speed);
   analogWrite(MOTOR_R_IN2, 0);
+  if (durationMs > 0) {
+    delay(durationMs);
+    stopMotors();
+  }
 
   float rad = botHeadingDeg * 0.0174533;
-  posX_cm += 5.0 * cos(rad);
-  posY_cm += 5.0 * sin(rad);
-  Serial.printf("POS:%.1f,%.1f,%.1f\\n", posX_cm, posY_cm, botHeadingDeg);
+  posX_cm += 20.0 * cos(rad);
+  posY_cm += 20.0 * sin(rad);
+  Serial.printf("POS:%.1f,%.1f,%.1f\n", posX_cm, posY_cm, botHeadingDeg);
 }
 
-void driveBackward(int pwm = -1) {
+void driveBackward(int pwm = -1, int durationMs = 200) {
   int speed = (pwm > 0) ? clampPwm(pwm) : currentMotorPwm;
   analogWrite(MOTOR_L_IN1, 0);
   analogWrite(MOTOR_L_IN2, speed);
   analogWrite(MOTOR_R_IN1, 0);
   analogWrite(MOTOR_R_IN2, speed);
+  if (durationMs > 0) {
+    delay(durationMs);
+    stopMotors();
+  }
 
   float rad = botHeadingDeg * 0.0174533;
-  posX_cm -= 4.0 * cos(rad);
-  posY_cm -= 4.0 * sin(rad);
-  Serial.printf("POS:%.1f,%.1f,%.1f\\n", posX_cm, posY_cm, botHeadingDeg);
+  posX_cm -= 20.0 * cos(rad);
+  posY_cm -= 20.0 * sin(rad);
+  Serial.printf("POS:%.1f,%.1f,%.1f\n", posX_cm, posY_cm, botHeadingDeg);
 }
 
 void turnLeft(int pwm = -1, int deg = 15) {
@@ -160,7 +170,15 @@ void turnLeft(int pwm = -1, int deg = 15) {
 
   botHeadingDeg += deg;
   if (botHeadingDeg >= 360.0) botHeadingDeg -= 360.0;
-  Serial.printf("POS:%.1f,%.1f,%.1f\\n", posX_cm, posY_cm, botHeadingDeg);
+  Serial.printf("POS:%.1f,%.1f,%.1f\n", posX_cm, posY_cm, botHeadingDeg);
+
+  // REINICIAR EL SONDEO EN 90° AL GIRAR EL BOT
+  currentScanMode = NARROW_PATROL;
+  currentAngle = CENTER_ANGLE;
+  radarServo.write(CENTER_ANGLE);
+  isScanningActive = true;
+  surveyPassCount = 0;
+  Serial.println("SYS:SCAN_RESTARTED_ON_TURN");
 }
 
 void turnRight(int pwm = -1, int deg = 15) {
@@ -174,7 +192,15 @@ void turnRight(int pwm = -1, int deg = 15) {
 
   botHeadingDeg -= deg;
   if (botHeadingDeg < 0.0) botHeadingDeg += 360.0;
-  Serial.printf("POS:%.1f,%.1f,%.1f\\n", posX_cm, posY_cm, botHeadingDeg);
+  Serial.printf("POS:%.1f,%.1f,%.1f\n", posX_cm, posY_cm, botHeadingDeg);
+
+  // REINICIAR EL SONDEO EN 90° AL GIRAR EL BOT
+  currentScanMode = NARROW_PATROL;
+  currentAngle = CENTER_ANGLE;
+  radarServo.write(CENTER_ANGLE);
+  isScanningActive = true;
+  surveyPassCount = 0;
+  Serial.println("SYS:SCAN_RESTARTED_ON_TURN");
 }
 
 // Lectura de ultrasonido HC-SR04 con filtrado anti-ruido
@@ -243,14 +269,32 @@ void loop() {
       Serial.println("SYS:STOPPED");
     } else if (cmd.startsWith("MOVE:F")) {
       int pwm = currentMotorPwm;
-      int comma = cmd.indexOf(',');
-      if (comma > 0) pwm = cmd.substring(comma + 1).toInt();
-      driveForward(pwm);
+      int dur = 200;
+      int comma1 = cmd.indexOf(',');
+      if (comma1 > 0) {
+        int comma2 = cmd.indexOf(',', comma1 + 1);
+        if (comma2 > 0) {
+          pwm = cmd.substring(comma1 + 1, comma2).toInt();
+          dur = cmd.substring(comma2 + 1).toInt();
+        } else {
+          pwm = cmd.substring(comma1 + 1).toInt();
+        }
+      }
+      driveForward(pwm, dur);
     } else if (cmd.startsWith("MOVE:B")) {
       int pwm = currentMotorPwm;
-      int comma = cmd.indexOf(',');
-      if (comma > 0) pwm = cmd.substring(comma + 1).toInt();
-      driveBackward(pwm);
+      int dur = 200;
+      int comma1 = cmd.indexOf(',');
+      if (comma1 > 0) {
+        int comma2 = cmd.indexOf(',', comma1 + 1);
+        if (comma2 > 0) {
+          pwm = cmd.substring(comma1 + 1, comma2).toInt();
+          dur = cmd.substring(comma2 + 1).toInt();
+        } else {
+          pwm = cmd.substring(comma1 + 1).toInt();
+        }
+      }
+      driveBackward(pwm, dur);
     } else if (cmd.startsWith("TURN:L")) {
       int pwm = currentMotorPwm;
       int deg = 15;
@@ -355,17 +399,19 @@ void loop() {
           currentAngle -= 2;
           if (currentAngle <= surveyMinServoAngle) {
             currentAngle = surveyMinServoAngle;
-            // Sondeo enfocado completado: retornar inmediatamente al estado normal
-            currentScanMode = NARROW_PATROL;
-            sweepDirection = 1;
-            totalSweepsCompleted++;
-            Serial.printf("SYS:SWEEP_CYCLE_COMPLETE,%lu\\n", totalSweepsCompleted);
-            Serial.println("SYS:MODE,NARROW_PATROL_RESUMED");
-
-            // Si el camino se despejó (> 40cm), retornar al centro 90°
-            if (distance > OBSTACLE_TRIGGER_CM) {
-              currentAngle = CENTER_ANGLE;
-              radarServo.write(currentAngle);
+            surveyPassCount++;
+            if (surveyPassCount < 3) {
+              surveyStepDirection = 1;
+              Serial.printf("SYS:SURVEY_PASS,%d/3\n", surveyPassCount);
+            } else {
+              // 3 barridos del objeto completados: DETENER EL SONDEO
+              isScanningActive = false;
+              currentScanMode = SURVEY_PAUSED;
+              surveyPassCount = 0;
+              totalSweepsCompleted++;
+              Serial.printf("SYS:SWEEP_CYCLE_COMPLETE,%lu\n", totalSweepsCompleted);
+              Serial.println("SYS:SURVEY_3_PASSES_COMPLETE_STOPPED");
+              Serial.println("SYS:STOPPED");
             }
           }
         }

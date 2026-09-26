@@ -128,8 +128,8 @@ export const WorldDiscovererTemplate: React.FC = () => {
               waypoints={waypoints}
               isAutonomous={isAutonomous}
               onToggleAutonomous={toggleAutonomous}
-              onDriveForward={(dist, pwm) => driveForward(dist || 8, pwm)}
-              onDriveBackward={(dist, pwm) => driveBackward(dist || 8, pwm)}
+              onDriveForward={(dist, pwm) => driveForward(dist || 20, pwm)}
+              onDriveBackward={(dist, pwm) => driveBackward(dist || 20, pwm)}
               onTurnLeft={(deg, pwm) => turnLeft(deg || 15, pwm)}
               onTurnRight={(deg, pwm) => turnRight(deg || 15, pwm)}
               onStopBot={stopBot}
@@ -170,8 +170,8 @@ export const WorldDiscovererTemplate: React.FC = () => {
                 theme={visualTheme}
                 isAutonomous={isAutonomous}
                 onToggleAutonomous={toggleAutonomous}
-                onDriveForward={() => driveForward(8)}
-                onDriveBackward={() => driveBackward(8)}
+                onDriveForward={() => driveForward(20)}
+                onDriveBackward={() => driveBackward(20)}
                 onTurnLeft={() => turnLeft(15)}
                 onTurnRight={() => turnRight(15)}
                 onStopBot={stopBot}

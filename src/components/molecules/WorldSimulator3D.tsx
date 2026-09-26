@@ -762,15 +762,19 @@ export const WorldSimulator3D: React.FC<WorldSimulator3DProps> = ({
             </span>
             <span
               className={`text-[9px] px-1 py-0.2 rounded font-sans uppercase font-bold ${
-                roverState.scanMode === 'obstacle_focused_survey'
+                roverState.scanMode === 'survey_paused' || !roverState.isScanning
+                  ? 'bg-purple-500/30 text-purple-300 border border-purple-500/40'
+                  : roverState.scanMode === 'obstacle_focused_survey'
                   ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 animate-pulse'
                   : roverState.currentDistanceCm <= roverState.obstacleThresholdCm
                   ? 'bg-rose-500/30 text-rose-300 border border-rose-500/40'
                   : 'bg-emerald-500/20 text-emerald-300'
               }`}
             >
-              {roverState.scanMode === 'obstacle_focused_survey'
-                ? 'Sondeo (+25°/-10°)'
+              {roverState.scanMode === 'survey_paused' || !roverState.isScanning
+                ? 'Sondeo Detenido (Gira Bot)'
+                : roverState.scanMode === 'obstacle_focused_survey'
+                ? `Sondeo (${Math.min(3, (roverState.surveyPassesCount || 0) + 1)}/3)`
                 : roverState.scanMode === 'narrow_patrol'
                 ? '±15°'
                 : '±55°'}
@@ -1030,7 +1034,9 @@ function rebuildDiscoveredWalls(group: THREE.Group, points: DiscoveredPoint2D[])
     group.remove(child);
   }
 
-  if (points.length === 0) return;
+  // REGLA ESTRICTA: Solo pintar paredes si la distancia es MENOR a 70 cm (< 70 cm)
+  const validPoints = points.filter((p) => p.distanceCm < 70.0);
+  if (validPoints.length === 0) return;
 
   const wallHeight = 0.75; // 75 cm wall height
   const wallWidth = 0.22; // 22 cm wall thickness
@@ -1059,8 +1065,8 @@ function rebuildDiscoveredWalls(group: THREE.Group, points: DiscoveredPoint2D[])
     emissiveIntensity: 0.8,
   });
 
-  // 1. Spawn a 3D wall block at each detected obstacle point
-  points.forEach((p) => {
+  // 1. Spawn a 3D wall block at each detected obstacle point (< 70 cm)
+  validPoints.forEach((p) => {
     const wx = p.worldX / 100;
     const wz = -p.worldY / 100;
     const isClose = p.distanceCm <= 40;
@@ -1087,13 +1093,13 @@ function rebuildDiscoveredWalls(group: THREE.Group, points: DiscoveredPoint2D[])
 
   // 2. Connect adjacent detected obstacle points with continuous 3D wall slabs (< 35 cm apart)
   const connectedPairs = new Set<string>();
-  for (let i = 0; i < points.length; i++) {
-    const p1 = points[i];
+  for (let i = 0; i < validPoints.length; i++) {
+    const p1 = validPoints[i];
     const x1 = p1.worldX / 100;
     const z1 = -p1.worldY / 100;
 
-    for (let j = i + 1; j < Math.min(i + 12, points.length); j++) {
-      const p2 = points[j];
+    for (let j = i + 1; j < Math.min(i + 12, validPoints.length); j++) {
+      const p2 = validPoints[j];
       const x2 = p2.worldX / 100;
       const z2 = -p2.worldY / 100;
 

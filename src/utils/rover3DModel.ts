@@ -445,8 +445,31 @@ export function updateRover3D(
   const targetX = worldXCm / 100;
   const targetZ = -worldYCm / 100; // In Three.js, -Z is forward / North
 
-  rover.rootGroup.position.x = targetX;
-  rover.rootGroup.position.z = targetZ;
+  const dx = targetX - rover.rootGroup.position.x;
+  const dz = targetZ - rover.rootGroup.position.z;
+  const distToTargetM = Math.hypot(dx, dz);
+
+  // If first render or large jump (> 3m), snap position
+  if (distToTargetM > 3.0 || isNaN(rover.rootGroup.position.x)) {
+    rover.rootGroup.position.x = targetX;
+    rover.rootGroup.position.z = targetZ;
+  } else if (distToTargetM > 0.001) {
+    const lerpFactor = Math.min(1.0, deltaSec * 14);
+    rover.rootGroup.position.x += dx * lerpFactor;
+    rover.rootGroup.position.z += dz * lerpFactor;
+
+    // Roll wheels smoothly according to actual movement
+    const wheelRadiusM = 0.095;
+    const rotDelta = (distToTargetM * lerpFactor) / wheelRadiusM;
+    rover.wheelRotationAngle += rotDelta;
+    rover.wheels.frontLeft.rotation.x = rover.wheelRotationAngle;
+    rover.wheels.frontRight.rotation.x = rover.wheelRotationAngle;
+    rover.wheels.rearLeft.rotation.x = rover.wheelRotationAngle;
+    rover.wheels.rearRight.rotation.x = rover.wheelRotationAngle;
+  } else {
+    rover.rootGroup.position.x = targetX;
+    rover.rootGroup.position.z = targetZ;
+  }
 
   // 2. Heading rotation around global Y axis
   // 90° heading (North) maps to 0 rotation (facing -Z)
@@ -462,8 +485,8 @@ export function updateRover3D(
   const servoOffsetRad = (servoOffsetDeg * Math.PI) / 180;
   rover.turretServo.rotation.y = servoOffsetRad;
 
-  // 4. Wheels spinning animation
-  if (isMoving && speedCmS !== 0) {
+  // 4. Wheels spinning fallback when actively moving continuously
+  if (isMoving && speedCmS !== 0 && distToTargetM <= 0.001) {
     const wheelRadiusM = 0.095;
     const distanceMovedM = (speedCmS / 100) * deltaSec;
     const rotDelta = distanceMovedM / wheelRadiusM;
