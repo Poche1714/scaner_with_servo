@@ -1,5 +1,4 @@
-import React from 'react';
-import { BotPose, TrajectoryPoint, Waypoint } from '../../types/worldDiscoverer';
+import { BotPose, TrajectoryPoint, Waypoint, RoverSweepState } from '../../types/worldDiscoverer';
 import {
   ArrowUp,
   ArrowDown,
@@ -15,12 +14,14 @@ import {
   Sliders,
   Play,
   RotateCw,
+  AlertOctagon,
 } from 'lucide-react';
 
 interface BotNavigationCardProps {
   botPose: BotPose;
   trajectory: TrajectoryPoint[];
   waypoints: Waypoint[];
+  roverState?: RoverSweepState;
   isAutonomous: boolean;
   onToggleAutonomous: () => void;
   onDriveForward: (distCm?: number, customPwm?: number) => void;
@@ -39,6 +40,7 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
   botPose,
   trajectory,
   waypoints,
+  roverState,
   isAutonomous,
   onToggleAutonomous,
   onDriveForward,
@@ -184,17 +186,32 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
         </span>
       </button>
 
+      {/* Obstacle Alert & Sampling Halted Banner */}
+      {roverState && (roverState.isObstacleDetected || roverState.scanMode === 'survey_paused') && (
+        <div className="bg-rose-950/70 border border-rose-500/60 rounded-lg p-2.5 flex items-start gap-2.5 text-rose-200 shadow-md">
+          <AlertOctagon className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-bold text-rose-300 text-xs">
+              ¡Obstáculo Detectado ({roverState.currentDistanceCm.toFixed(1)} cm)! Muestreo Detenido
+            </span>
+            <span className="text-[11px] text-rose-200/90 leading-tight">
+              Pulsa <strong>IZQ</strong> o <strong>DER</strong> para girar el coche y reiniciar el senso automáticamente.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* D-Pad Virtual Steering Controls with Active PWM */}
       <div className="flex flex-col items-center gap-2 py-1">
         {/* Forward */}
         <button
           onClick={() => onDriveForward(20, motorPwm)}
           disabled={disabled || isAutonomous}
-          className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+          className="w-16 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
           title={`Avanzar +20cm con PWM ${motorPwm} (W / Flecha Arriba)`}
         >
           <ArrowUp className="w-5 h-5" />
-          <span className="text-[9px] font-mono opacity-60">FWD +20</span>
+          <span className="text-[9px] font-mono opacity-80">AVANZAR</span>
         </button>
 
         {/* Left - Stop - Right */}
@@ -202,11 +219,11 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
           <button
             onClick={() => onTurnLeft(15, motorPwm)}
             disabled={disabled || isAutonomous}
-            className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-            title={`Girar Izquierda 15° con PWM ${motorPwm} (A / Flecha Izquierda)`}
+            className="w-16 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+            title={`Girar Izquierda 15° y reiniciar senso con PWM ${motorPwm} (A / Flecha Izquierda)`}
           >
             <ArrowLeft className="w-5 h-5" />
-            <span className="text-[9px] font-mono opacity-60">IZQ</span>
+            <span className="text-[9px] font-mono opacity-80">GIRAR IZQ</span>
           </button>
 
           <button
@@ -222,11 +239,11 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
           <button
             onClick={() => onTurnRight(15, motorPwm)}
             disabled={disabled || isAutonomous}
-            className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
-            title={`Girar Derecha 15° con PWM ${motorPwm} (D / Flecha Derecha)`}
+            className="w-16 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+            title={`Girar Derecha 15° y reiniciar senso con PWM ${motorPwm} (D / Flecha Derecha)`}
           >
             <ArrowRight className="w-5 h-5" />
-            <span className="text-[9px] font-mono opacity-60">DER</span>
+            <span className="text-[9px] font-mono opacity-80">GIRAR DER</span>
           </button>
         </div>
 
@@ -234,40 +251,80 @@ export const BotNavigationCard: React.FC<BotNavigationCardProps> = ({
         <button
           onClick={() => onDriveBackward(20, motorPwm)}
           disabled={disabled || isAutonomous}
-          className="w-14 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
+          className="w-16 h-12 bg-neutral-800 hover:bg-neutral-700 active:bg-amber-600 text-neutral-200 active:text-white rounded-lg flex flex-col items-center justify-center transition-colors border border-neutral-700/80 cursor-pointer disabled:opacity-40"
           title={`Retroceder -20cm con PWM ${motorPwm} (S / Flecha Abajo)`}
         >
           <ArrowDown className="w-5 h-5" />
-          <span className="text-[9px] font-mono opacity-60">REV -20</span>
+          <span className="text-[9px] font-mono opacity-80">RETROCEDER</span>
         </button>
       </div>
 
-      {/* Quick Impulse Buttons */}
-      <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
-        <button
-          onClick={() => onDriveForward(30, motorPwm)}
-          disabled={disabled || isAutonomous}
-          className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
-          title="Impulso de avance calibrado 30cm"
-        >
-          Paso +30cm
-        </button>
-        <button
-          onClick={() => onTurnLeft(30, motorPwm)}
-          disabled={disabled || isAutonomous}
-          className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
-          title="Giro izquierda 30°"
-        >
-          Giro 30° Izq
-        </button>
-        <button
-          onClick={() => onTurnRight(30, motorPwm)}
-          disabled={disabled || isAutonomous}
-          className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
-          title="Giro derecha 30°"
-        >
-          Giro 30° Der
-        </button>
+      {/* Quick Impulse Steps Section */}
+      <div className="flex flex-col gap-1.5 pt-1 border-t border-neutral-800/80">
+        <span className="text-[10px] font-mono text-neutral-400 font-semibold px-0.5">
+          Pasos de Avance & Giro Calibrados:
+        </span>
+        <div className="grid grid-cols-4 gap-1 text-center font-mono">
+          <button
+            onClick={() => onDriveForward(10, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Paso corto +10cm"
+          >
+            Paso 10cm
+          </button>
+          <button
+            onClick={() => onDriveForward(20, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Paso estándar +20cm"
+          >
+            Paso 20cm
+          </button>
+          <button
+            onClick={() => onDriveForward(30, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Paso largo +30cm"
+          >
+            Paso 30cm
+          </button>
+          <button
+            onClick={() => onDriveForward(50, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Paso extra largo +50cm"
+          >
+            Paso 50cm
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 gap-1 text-center font-mono">
+          <button
+            onClick={() => onTurnLeft(30, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Giro izquierda 30° (reinicia senso)"
+          >
+            Giro 30° Izq
+          </button>
+          <button
+            onClick={() => onDriveBackward(20, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Retroceso calibrado 20cm"
+          >
+            Rev 20cm
+          </button>
+          <button
+            onClick={() => onTurnRight(30, motorPwm)}
+            disabled={disabled || isAutonomous}
+            className="bg-neutral-950 hover:bg-neutral-800 text-neutral-300 py-1.5 rounded border border-neutral-800 text-[11px] transition-colors cursor-pointer"
+            title="Giro derecha 30° (reinicia senso)"
+          >
+            Giro 30° Der
+          </button>
+        </div>
       </div>
 
       {/* Keyboard Shortcut Hint */}

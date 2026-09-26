@@ -120,19 +120,29 @@ int clampPwm(int value) {
 // --- Control de Motores con PWM (analogWrite universal para ESP32 Core v2 y v3) ---
 void stopMotors() {
   analogWrite(MOTOR_L_IN1, 0);
-  analogWrite(MOTOR_L_IN2, 0);
+  digitalWrite(MOTOR_L_IN2, LOW);
   analogWrite(MOTOR_R_IN1, 0);
-  analogWrite(MOTOR_R_IN2, 0);
+  digitalWrite(MOTOR_R_IN2, LOW);
 }
 
-void driveForward(int pwm = -1, int durationMs = 200) {
+void driveForward(int pwm = -1, int durationMs = 600) {
   int speed = (pwm > 0) ? clampPwm(pwm) : currentMotorPwm;
+  // Pulso de arranque de 40ms al 100% (255) para vencer la inercia estática y rozamiento con el suelo
+  analogWrite(MOTOR_L_IN1, 255);
+  digitalWrite(MOTOR_L_IN2, LOW);
+  analogWrite(MOTOR_R_IN1, 255);
+  digitalWrite(MOTOR_R_IN2, LOW);
+  delay(40);
+
+  // Mantener avance con el PWM calibrado del usuario
   analogWrite(MOTOR_L_IN1, speed);
-  analogWrite(MOTOR_L_IN2, 0);
+  digitalWrite(MOTOR_L_IN2, LOW);
   analogWrite(MOTOR_R_IN1, speed);
-  analogWrite(MOTOR_R_IN2, 0);
+  digitalWrite(MOTOR_R_IN2, LOW);
+
   if (durationMs > 0) {
-    delay(durationMs);
+    int remainingMs = durationMs - 40;
+    if (remainingMs > 0) delay(remainingMs);
     stopMotors();
   }
 
@@ -142,14 +152,23 @@ void driveForward(int pwm = -1, int durationMs = 200) {
   Serial.printf("POS:%.1f,%.1f,%.1f\n", posX_cm, posY_cm, botHeadingDeg);
 }
 
-void driveBackward(int pwm = -1, int durationMs = 200) {
+void driveBackward(int pwm = -1, int durationMs = 600) {
   int speed = (pwm > 0) ? clampPwm(pwm) : currentMotorPwm;
-  analogWrite(MOTOR_L_IN1, 0);
+  // Pulso de arranque
+  digitalWrite(MOTOR_L_IN1, LOW);
+  analogWrite(MOTOR_L_IN2, 255);
+  digitalWrite(MOTOR_R_IN1, LOW);
+  analogWrite(MOTOR_R_IN2, 255);
+  delay(40);
+
+  digitalWrite(MOTOR_L_IN1, LOW);
   analogWrite(MOTOR_L_IN2, speed);
-  analogWrite(MOTOR_R_IN1, 0);
+  digitalWrite(MOTOR_R_IN1, LOW);
   analogWrite(MOTOR_R_IN2, speed);
+
   if (durationMs > 0) {
-    delay(durationMs);
+    int remainingMs = durationMs - 40;
+    if (remainingMs > 0) delay(remainingMs);
     stopMotors();
   }
 
@@ -365,56 +384,21 @@ void loop() {
 
       // PASO E: Evaluación de Detección de Obstáculo a <= 40 cm
       if (distance <= OBSTACLE_TRIGGER_CM) {
-        if (currentScanMode == NARROW_PATROL) {
-          // Obstáculo detectado durante patrullaje normal
-          // Calcular ángulo relativo (-55° a +55°)
-          int relAngle = currentAngle - CENTER_ANGLE;
-          surveyTargetAngleRel = relAngle;
+        // REGLA: Dejar de realizar el muestreo inmediatamente y lanzar alerta
+        // Solo hasta que gire el coche se reinicia el senso (en turnLeft / turnRight)
+        isScanningActive = false;
+        currentScanMode = SURVEY_PAUSED;
+        int relAngle = currentAngle - CENTER_ANGLE;
 
-          // Registrar los siguientes 25 grados más y los 10 grados menos
-          int targetMaxRel = constrain(relAngle + 25, -MAX_OBSTACLE_SPAN, MAX_OBSTACLE_SPAN);
-          int targetMinRel = constrain(relAngle - 10, -MAX_OBSTACLE_SPAN, MAX_OBSTACLE_SPAN);
-
-          surveyMaxServoAngle = CENTER_ANGLE + targetMaxRel;
-          surveyMinServoAngle = CENTER_ANGLE + targetMinRel;
-          surveyStepDirection = 1; // Primero registrar los +25° más
-          currentScanMode = OBJECT_FOCUSED_SURVEY;
-
-          Serial.printf("ALERT:OBSTACLE,%.1f\\n", distance);
-          Serial.printf("ALERT:SURVEY_OBJECT,%d,%d,%d\\n", relAngle, targetMinRel, targetMaxRel);
-          Serial.println("SYS:MODE,OBJECT_FOCUSED_SURVEY");
-        }
+        Serial.printf("ALERT:OBSTACLE,%.1f\\n", distance);
+        Serial.printf("ALERT:OBSTACLE_STOPPED,%d,%.1f\\n", relAngle, distance);
+        Serial.println("SYS:OBSTACLE_DETECTED_SAMPLING_STOPPED");
+        Serial.println("SYS:STOPPED");
       }
 
       // PASO F: Avance angular según el modo activo
-      if (currentScanMode == OBJECT_FOCUSED_SURVEY) {
-        // Sondeo enfocado del objeto (+25° más y -10° menos del ángulo detectado)
-        if (surveyStepDirection == 1) {
-          currentAngle += 2;
-          if (currentAngle >= surveyMaxServoAngle) {
-            currentAngle = surveyMaxServoAngle;
-            surveyStepDirection = -1; // Invertir hacia los -10°
-          }
-        } else {
-          currentAngle -= 2;
-          if (currentAngle <= surveyMinServoAngle) {
-            currentAngle = surveyMinServoAngle;
-            surveyPassCount++;
-            if (surveyPassCount < 3) {
-              surveyStepDirection = 1;
-              Serial.printf("SYS:SURVEY_PASS,%d/3\n", surveyPassCount);
-            } else {
-              // 3 barridos del objeto completados: DETENER EL SONDEO
-              isScanningActive = false;
-              currentScanMode = SURVEY_PAUSED;
-              surveyPassCount = 0;
-              totalSweepsCompleted++;
-              Serial.printf("SYS:SWEEP_CYCLE_COMPLETE,%lu\n", totalSweepsCompleted);
-              Serial.println("SYS:SURVEY_3_PASSES_COMPLETE_STOPPED");
-              Serial.println("SYS:STOPPED");
-            }
-          }
-        }
+      if (currentScanMode == SURVEY_PAUSED) {
+        // Sondeo detenido por detección de obstáculo. Permanece detenido hasta giro del coche.
       } else if (currentScanMode == NARROW_PATROL) {
         // Vigilancia normal estrecha: 0 a +15° y 0 a -15° (75° a 105°)
         const int minNarrow = CENTER_ANGLE - NARROW_SPAN; // 75°

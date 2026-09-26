@@ -126,6 +126,7 @@ export const WorldDiscovererTemplate: React.FC = () => {
               botPose={botPose}
               trajectory={trajectory}
               waypoints={waypoints}
+              roverState={roverState}
               isAutonomous={isAutonomous}
               onToggleAutonomous={toggleAutonomous}
               onDriveForward={(dist, pwm) => driveForward(dist || 20, pwm)}

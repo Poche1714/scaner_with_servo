@@ -11,6 +11,7 @@ export interface DiscoveredPoint2D {
   sweepCycle: number;
   hits: number;
   type: 'wall' | 'obstacle' | 'anomaly';
+  clearConfirmations?: number; // Contador de validaciones consecutivas > 70 cm (requiere 3 para borrar)
 }
 
 export interface TrajectoryPoint {

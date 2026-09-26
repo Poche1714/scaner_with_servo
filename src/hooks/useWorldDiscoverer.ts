@@ -185,10 +185,13 @@ export function useWorldDiscoverer() {
       const beamRad = (beamAngleDeg * Math.PI) / 180;
 
       setPoints((prev) => {
-        // 1. DINÁMICA DE BORRADO DE PAREDES:
-        // Si teníamos un punto ya pintado a lo largo de esta línea de visión pero la distancia
-        // ahora medida es MAYOR (distancia despejada), se borra la pared en ese punto.
-        const filteredPoints = prev.filter((p) => {
+        // 1. REGLA DE BORRADO DE PAREDES:
+        // Validar 3 veces este mismo punto: las tres medidas deben estar por encima de 70 cm para borrarla.
+        // En caso de que una de ellas vuelva a dar por debajo de este valor (<= 70 cm), NO se borra y se reinicia el contador.
+        let pointDeleted = false;
+        const updatedPoints: DiscoveredPoint2D[] = [];
+
+        for (const p of prev) {
           const dx = p.worldX - currentBot.x;
           const dy = p.worldY - currentBot.y;
           const distToP = Math.hypot(dx, dy);
@@ -198,21 +201,47 @@ export function useWorldDiscoverer() {
           let angleDiff = Math.abs(angleToP - beamAngleDeg) % 360;
           if (angleDiff > 180) angleDiff = 360 - angleDiff;
 
-          // Si el punto está en el haz del sonar (cono de ~9°)
+          // Si el punto cae dentro del haz del sensor (cono de visión de ~9°)
           if (angleDiff < 9.0) {
-            // Si la distancia medida actual es mayor que la posición del punto (con margen de 7cm)
-            if (distanceCm > distToP + 7.0) {
-              // El objeto se quitó o el haz atraviesa libremente: BORRAR LA PARED
-              return false;
+            // El haz del sonar apunta hacia este punto
+            if (distanceCm > 70.0 && distanceCm > distToP + 6.0) {
+              // Medida actual por encima de 70 cm y el haz atraviesa libremente más allá del punto
+              const currentConfirmations = (p.clearConfirmations || 0) + 1;
+              if (currentConfirmations >= 3) {
+                // ¡Validado 3 veces consecutivas por encima de 70 cm! SE BORRA LA PARED
+                pointDeleted = true;
+                continue; // No incluir en updatedPoints (se borra)
+              } else {
+                // Aún no llega a 3 validaciones: incrementar y mantener en el mapa
+                updatedPoints.push({
+                  ...p,
+                  clearConfirmations: currentConfirmations,
+                });
+                continue;
+              }
+            } else if (distanceCm <= 70.0 && Math.abs(distanceCm - distToP) < 14.0) {
+              // "en caso de que una de ellas vuelva a dar por debajo de este valor no se borra"
+              // Se detectó pared u obstáculo en la zona: reiniciar el contador a 0
+              updatedPoints.push({
+                ...p,
+                clearConfirmations: 0,
+              });
+              continue;
             }
           }
-          return true;
-        });
 
-        // 2. REGLA ESTRICTA: "solo pinte las paredes si la distancia es menor a 70 cm"
+          // Fuera del haz o sin cambio: mantener el punto intacto
+          updatedPoints.push(p);
+        }
+
+        if (pointDeleted) {
+          addLog('Pared validada 3 veces despejada (> 70 cm): PARED BORRADA del simulador.', 'sys');
+        }
+
+        // 2. REGLA ESTRICTA DE PINTADO: "solo pinte las paredes si la distancia es menor a 70 cm"
         if (distanceCm >= 70.0) {
           // No pintar pared en el simulador si la distancia es >= 70 cm
-          return filteredPoints;
+          return updatedPoints;
         }
 
         // Calcular coordenadas globales exactas para la pared a distancia < 70 cm
@@ -228,12 +257,12 @@ export function useWorldDiscoverer() {
         }
 
         // Spatial clustering: reforzar si está dentro de 7cm
-        const existingIdx = filteredPoints.findIndex(
+        const existingIdx = updatedPoints.findIndex(
           (p) => Math.hypot(p.worldX - worldX, p.worldY - worldY) < 7.0
         );
 
         if (existingIdx >= 0) {
-          const updated = [...filteredPoints];
+          const updated = [...updatedPoints];
           const item = updated[existingIdx];
           updated[existingIdx] = {
             ...item,
@@ -242,6 +271,7 @@ export function useWorldDiscoverer() {
             distanceCm,
             worldX,
             worldY,
+            clearConfirmations: 0, // Reiniciar validaciones de borrado porque dio <= 70 cm
             type: classification || item.type,
           };
           return updated;
@@ -259,16 +289,17 @@ export function useWorldDiscoverer() {
           timestamp: now,
           sweepCycle: roverState.totalSweepsCompleted,
           hits: 1,
+          clearConfirmations: 0,
           type: classification || (distanceCm < 40 ? 'obstacle' : 'wall'),
         };
 
-        if (filteredPoints.length > 900) {
-          return [...filteredPoints.slice(filteredPoints.length - 899), newPoint];
+        if (updatedPoints.length > 900) {
+          return [...updatedPoints.slice(updatedPoints.length - 899), newPoint];
         }
-        return [...filteredPoints, newPoint];
+        return [...updatedPoints, newPoint];
       });
     },
-    [roverState.totalSweepsCompleted]
+    [roverState.totalSweepsCompleted, addLog]
   );
 
   // Append a point to the bot's trajectory breadcrumb trail
@@ -309,7 +340,7 @@ export function useWorldDiscoverer() {
 
   // Bot Navigation Engine (Drive Controls)
   const moveBot = useCallback(
-    (deltaForwardCm: number, deltaHeadingDeg: number, speedCmS: number = 20) => {
+    (deltaForwardCm: number, deltaHeadingDeg: number, speedCmS: number = 20, durationMs: number = 700) => {
       setBotPose((prev) => {
         const rad = (prev.heading * Math.PI) / 180;
         const newX = prev.x + deltaForwardCm * Math.cos(rad);
@@ -332,12 +363,12 @@ export function useWorldDiscoverer() {
         return nextPose;
       });
 
-      // Clear previous timeout and set speed/moving to 0 after short driving pulse
+      // Clear previous timeout and set speed/moving to 0 after driving pulse finishes
       if (moveTimerRef.current) clearTimeout(moveTimerRef.current);
       if (speedCmS > 0) {
         moveTimerRef.current = setTimeout(() => {
           setBotPose((prev) => ({ ...prev, isMoving: false, speed: 0 }));
-        }, 600);
+        }, Math.max(600, durationMs));
       }
     },
     [isAutonomous, recordTrajectoryBreadcrumb]
@@ -363,18 +394,19 @@ export function useWorldDiscoverer() {
     }));
     sendSerialCommand('START');
     sendSerialCommand('GOTO:90');
-    addLog('Giro del bot detectado: Sondeo REINICIADO en 90° (Vigilancia normal ±15°).', 'sys');
+    addLog('Giro del vehículo detectado: Senso y muestreo REINICIADOS hacia el frente (90° / Vigilancia ±15°).', 'sys');
   }, [sendSerialCommand, addLog]);
 
-  // Manual driving actions with calibrated PWM (175 - 198) and noticeable step size (20cm)
+  // Manual driving actions with calibrated PWM (175 - 198) and calibrated step duration
   const driveForward = useCallback(
     (distCm: number = 20, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
       const speedCmS = Number(((activePwm / 185) * 25).toFixed(1));
-      moveBot(distCm, 0, speedCmS);
-      sendSerialCommand(`MOVE:F,${activePwm},200`);
+      const durationMs = Math.max(600, Math.round(distCm * 30));
+      moveBot(distCm, 0, speedCmS, durationMs);
+      sendSerialCommand(`MOVE:F,${activePwm},${durationMs}`);
       addLog(
-        `Avanzando bot +${distCm} cm hacia rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}).`,
+        `Avanzando bot paso de +${distCm} cm hacia rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}, impulso: ${durationMs}ms).`,
         'sys'
       );
     },
@@ -385,10 +417,11 @@ export function useWorldDiscoverer() {
     (distCm: number = 20, customPwm?: number) => {
       const activePwm = customPwm !== undefined ? Math.max(175, Math.min(198, customPwm)) : motorPwm;
       const speedCmS = Number(((activePwm / 185) * 20).toFixed(1));
-      moveBot(-distCm, 0, speedCmS);
-      sendSerialCommand(`MOVE:B,${activePwm},200`);
+      const durationMs = Math.max(600, Math.round(distCm * 30));
+      moveBot(-distCm, 0, speedCmS, durationMs);
+      sendSerialCommand(`MOVE:B,${activePwm},${durationMs}`);
       addLog(
-        `Retrocediendo bot -${distCm} cm desde rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}).`,
+        `Retrocediendo bot paso de -${distCm} cm desde rumbo ${Math.round(botPoseRef.current.heading)}° (PWM: ${activePwm}, impulso: ${durationMs}ms).`,
         'sys'
       );
     },
@@ -711,21 +744,21 @@ export function useWorldDiscoverer() {
                         let sMin = prev.surveyMinAngle;
                         let sMax = prev.surveyMaxAngle;
 
-                        if (isObstacle && prev.scanMode === 'narrow_patrol') {
-                          // Obstacle spotted! Initiate focused survey: +25° and -10°
-                          nextMode = 'obstacle_focused_survey';
+                        if (isObstacle && prev.scanMode !== 'survey_paused') {
+                          // Obstacle spotted! Stop sampling immediately and trigger alert
+                          nextMode = 'survey_paused';
                           obsDetectedAngle = relAngle;
-                          sMax = 90 + Math.min(55, relAngle + 25);
-                          sMin = 90 + Math.max(-55, relAngle - 10);
                           radarAudio.playObstacleAlert();
                           addLog(
-                            `¡OBSTÁCULO DETECTADO en ${relAngle}° a ${dist.toFixed(1)} cm! Iniciando sondeo enfocado: ${Math.min(55, relAngle + 25)}° (+25°) a ${Math.max(-55, relAngle - 10)}° (-10°)...`,
+                            `¡ALERTA CRÍTICA DE OBSTÁCULO! Obstáculo en ${relAngle}° a ${dist.toFixed(1)} cm (≤ 40 cm). Muestreo DETENIDO inmediatamente. Gire el coche para reiniciar el senso.`,
                             'sys'
                           );
+                          sendSerialCommand('STOP');
                         }
 
                         return {
                           ...prev,
+                          isScanning: !isObstacle && prev.isScanning,
                           currentAngle: Math.round(angle),
                           relativeAngle: relAngle,
                           currentDistanceCm: dist,
@@ -959,78 +992,31 @@ export function useWorldDiscoverer() {
         let surveyPasses = prev.surveyPassesCount || 0;
         let isScanningActive = prev.isScanning;
 
-        // 2. Detección de obstáculo a < 40 cm
-        if (newDist < THRESHOLD_CM) {
+        // 2. Detección de obstáculo a <= 40 cm
+        if (newDist <= THRESHOLD_CM) {
           isObstacle = true;
           obstacleDist = newDist;
 
-          // Si estaba en patrullaje normal, iniciar 3 barridos de sondeo enfocado del objeto
-          if (newMode === 'narrow_patrol') {
+          // REGLA: "cuando detecte un obstaculo, deje de realizar el muestreo y lance una alerta"
+          // "solo hasta que gire el coche de reiniciar el senso"
+          if (newMode !== 'survey_paused') {
             const relDetected = Math.round(currentSampleAngle - CENTER_ANGLE);
             obsDetectedAngle = relDetected;
-            // Registrar los siguientes 25 grados más y los 10 grados menos, delimitados por [-55°, +55°]
-            const targetMaxRel = Math.min(MAX_OBSTACLE_SPAN, relDetected + 25);
-            const targetMinRel = Math.max(-MAX_OBSTACLE_SPAN, relDetected - 10);
-            surveyMax = CENTER_ANGLE + targetMaxRel;
-            surveyMin = CENTER_ANGLE + targetMinRel;
-            surveyStepDir = 1; // Primero registrar los +25° más
-            surveyPasses = 0;  // Iniciar conteo de los 3 barridos
-            newMode = 'obstacle_focused_survey';
+            newMode = 'survey_paused';
+            isScanningActive = false; // Detener muestreo inmediatamente
 
+            radarAudio.playObstacleAlert();
             addLog(
-              `¡OBSTÁCULO DETECTADO a ${newDist.toFixed(1)} cm (< 40 cm) en ${relDetected}°! Iniciando 3 barridos de sondeo enfocado (+25° y -10°)...`,
+              `¡ALERTA CRÍTICA DE OBSTÁCULO! Objeto a ${newDist.toFixed(1)} cm (≤ ${THRESHOLD_CM} cm) en ${relDetected}°. MUESTREO DETENIDO inmediatamente. Gire el coche para reiniciar el senso.`,
               'sys'
             );
-            radarAudio.playObstacleAlert();
-          } else {
-            obstacleDist = Math.min(obstacleDist || newDist, newDist);
+            sendSerialCommand('STOP');
           }
         }
 
         // 3. Avance según el modo activo
-        if (newMode === 'obstacle_focused_survey') {
-          // Sondeo enfocado del objeto (+25° más y -10° menos del ángulo detectado, 3 barridos)
-          const stepDeg = 2.0;
-          const minTarget = surveyMin ?? (CENTER_ANGLE - 10);
-          const maxTarget = surveyMax ?? (CENTER_ANGLE + 25);
-
-          if (surveyStepDir === 1) {
-            // Avanza registrando hacia los +25° del objeto
-            newAngle += stepDeg;
-            if (newAngle >= maxTarget) {
-              newAngle = maxTarget;
-              surveyStepDir = -1; // Invertir para registrar hacia los -10°
-            }
-          } else {
-            // Barre registrando hacia los -10° del objeto
-            newAngle -= stepDeg;
-            if (newAngle <= minTarget) {
-              newAngle = minTarget;
-              const completedPasses = surveyPasses + 1;
-              if (completedPasses < 3) {
-                // Ejecutar el siguiente barrido de los 3 solicitados
-                surveyPasses = completedPasses;
-                surveyStepDir = 1; // Siguiente barrido hacia +25°
-                addLog(
-                  `Barrido enfocado del objeto ${completedPasses}/3 completado. Ejecutando barrido ${completedPasses + 1}...`,
-                  'sys'
-                );
-              } else {
-                // ¡Se han completado los 3 barridos del objeto! Detener el sondeo
-                newMode = 'survey_paused';
-                surveyPasses = 3;
-                isScanningActive = false; // "para de realizar el sondeo"
-                radarAudio.playSweepCycleComplete();
-                addLog(
-                  '¡3 barridos del objeto completados con éxito! Sondeo DETENIDO/PAUSADO. Gire el bot para reiniciar el sondeo.',
-                  'sys'
-                );
-                sendSerialCommand('STOP');
-              }
-            }
-          }
-        } else if (newMode === 'survey_paused') {
-          // Sondeo detenido tras los 3 barridos. Permanece quieto hasta que el bot gire.
+        if (newMode === 'survey_paused') {
+          // Sondeo detenido por detección de obstáculo. Permanece quieto sin muestreo hasta que el coche gire.
         } else if (newMode === 'narrow_patrol') {
           // Vigilancia normal: oscilación ±15° (de 75° a 105°)
           const minNarrow = CENTER_ANGLE - NARROW_SPAN; // 75°
